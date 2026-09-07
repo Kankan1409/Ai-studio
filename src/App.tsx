@@ -1,0 +1,246 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  Navbar,
+  Sidebar,
+  DashboardView,
+  WorkView,
+  WorkDetailModal,
+  AddTaskModal,
+  EmployeesView,
+  AddEmployeeModal,
+  GoogleSheetGuideView,
+  SettingsView,
+  AboutModal,
+} from './components';
+import { Task, Employee, ActiveTab, TaskStatus } from './types';
+import { INITIAL_TASKS, INITIAL_EMPLOYEES, PROJECTS_LIST } from './data/mockData';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+
+  // Persistent storage in localStorage
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const saved = localStorage.getItem('tm_tasks');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return INITIAL_TASKS;
+  });
+
+  const [employees, setEmployees] = useState<Employee[]>(() => {
+    const saved = localStorage.getItem('tm_employees');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return INITIAL_EMPLOYEES;
+  });
+
+  // Modals state
+  const [selectedTaskForDetail, setSelectedTaskForDetail] = useState<Task | null>(null);
+  const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
+  const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+
+  // Sync to localStorage
+  useEffect(() => {
+    localStorage.setItem('tm_tasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  useEffect(() => {
+    localStorage.setItem('tm_employees', JSON.stringify(employees));
+  }, [employees]);
+
+  // Handler: Update entire task
+  const handleUpdateTask = (updated: Task) => {
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    if (selectedTaskForDetail?.id === updated.id) {
+      setSelectedTaskForDetail(updated);
+    }
+  };
+
+  // Handler: Update status only
+  const handleUpdateTaskStatus = (taskId: string, newStatus: TaskStatus) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: newStatus,
+              progress: newStatus === 'Completed' ? 100 : t.progress,
+              updatedAt: new Date().toISOString(),
+            }
+          : t
+      )
+    );
+    if (selectedTaskForDetail?.id === taskId) {
+      setSelectedTaskForDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: newStatus,
+              progress: newStatus === 'Completed' ? 100 : prev.progress,
+            }
+          : null
+      );
+    }
+  };
+
+  // Handler: Delete task
+  const handleDeleteTask = (taskId: string) => {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    if (selectedTaskForDetail?.id === taskId) {
+      setSelectedTaskForDetail(null);
+    }
+  };
+
+  // Handler: Add new task(s)
+  const handleAddTask = (newTasks: Task | Task[]) => {
+    if (Array.isArray(newTasks)) {
+      setTasks((prev) => [...newTasks, ...prev]);
+    } else {
+      setTasks((prev) => [newTasks, ...prev]);
+    }
+  };
+
+  // Handler: Add new employee
+  const handleAddEmployee = (newEmployee: Employee) => {
+    setEmployees((prev) => [...prev, newEmployee]);
+  };
+
+  // Handler: Reset mock data
+  const handleResetData = () => {
+    setTasks(INITIAL_TASKS);
+    setEmployees(INITIAL_EMPLOYEES);
+    localStorage.removeItem('tm_tasks');
+    localStorage.removeItem('tm_employees');
+    setSelectedTaskForDetail(null);
+  };
+
+  const [workSearchQuery, setWorkSearchQuery] = useState<string>('');
+
+  // Handler: Jump to work view filtered by employee
+  const handleFilterEmployeeTasks = (employeeName: string) => {
+    setWorkSearchQuery(employeeName);
+    setActiveTab('work');
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
+      {/* Navbar matching Image 2 */}
+      <Navbar onOpenAbout={() => setIsAboutModalOpen(true)} />
+
+      {/* Main Layout: Sidebar + Content */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* Navigation Sidebar */}
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          tasksCount={tasks.length}
+          employeesCount={employees.length}
+        />
+
+        {/* Content View: Full width on computer screens */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 xl:px-10 w-full bg-slate-50">
+          <div className="w-full">
+            {activeTab === 'dashboard' && (
+              <DashboardView
+                tasks={tasks}
+                setActiveTab={setActiveTab}
+                onSelectTask={(task) => setSelectedTaskForDetail(task)}
+              />
+            )}
+
+            {activeTab === 'work' && (
+              <WorkView
+                tasks={tasks}
+                initialSearchQuery={workSearchQuery}
+                onSelectTask={(task) => setSelectedTaskForDetail(task)}
+                onAddTaskClick={() => setIsAddTaskModalOpen(true)}
+                onUpdateTaskStatus={handleUpdateTaskStatus}
+              />
+            )}
+
+            {activeTab === 'employees' && (
+              <EmployeesView
+                employees={employees}
+                tasks={tasks}
+                onAddEmployeeClick={() => setIsAddEmployeeModalOpen(true)}
+                onFilterEmployeeTasks={handleFilterEmployeeTasks}
+              />
+            )}
+
+            {activeTab === 'sheets_guide' && (
+              <GoogleSheetGuideView tasks={tasks} employees={employees} />
+            )}
+
+            {activeTab === 'settings' && (
+              <SettingsView
+                tasks={tasks}
+                employees={employees}
+                onResetData={handleResetData}
+                setActiveTab={setActiveTab}
+              />
+            )}
+          </div>
+        </main>
+      </div>
+
+      {/* Work Detail Modal: Opened from work or dashboard ("workdetail กดเอาจากwork นะ") */}
+      {selectedTaskForDetail && (
+        <WorkDetailModal
+          task={selectedTaskForDetail}
+          employees={employees}
+          isOpen={true}
+          onClose={() => setSelectedTaskForDetail(null)}
+          onUpdateTask={handleUpdateTask}
+          onDeleteTask={handleDeleteTask}
+        />
+      )}
+
+      {/* Add Task Modal */}
+      {isAddTaskModalOpen && (
+        <AddTaskModal
+          isOpen={true}
+          onClose={() => setIsAddTaskModalOpen(false)}
+          onAddTask={handleAddTask}
+          employees={employees}
+          projects={PROJECTS_LIST}
+          existingTasks={tasks}
+        />
+      )}
+
+      {/* Add Employee Modal */}
+      {isAddEmployeeModalOpen && (
+        <AddEmployeeModal
+          isOpen={true}
+          onClose={() => setIsAddEmployeeModalOpen(false)}
+          onAddEmployee={handleAddEmployee}
+          projects={PROJECTS_LIST}
+          existingEmployees={employees}
+        />
+      )}
+
+      {/* About Modal */}
+      {isAboutModalOpen && (
+        <AboutModal
+          isOpen={true}
+          onClose={() => setIsAboutModalOpen(false)}
+          onOpenSheetsGuide={() => setActiveTab('sheets_guide')}
+        />
+      )}
+    </div>
+  );
+}

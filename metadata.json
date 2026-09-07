@@ -1,0 +1,7 @@
+{
+  "name": "Task Manager",
+  "description": "ระบบจัดการงานและพนักงาน เชื่อมโยง Google Sheets และ Google Apps Script พร้อมแดชบอร์ดสรุปผลและรายละเอียดงาน",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
