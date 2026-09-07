@@ -32,6 +32,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
   const [name, setName] = useState('');
   const [project, setProject] = useState(projects[0] || 'แผนก/ITW');
+  const [projectId, setProjectId] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('');
@@ -45,7 +46,8 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
     const newEmp: Employee = {
       id: nextId,
       name: name.trim(),
-      project,
+      project: project.trim() || 'แผนก/ITW',
+      projectId: projectId.trim() || project.trim(),
       phone: phone.trim() || '08x-xxx-xxxx',
       email: email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@company.com`,
       role: role.trim() || 'Team Member',
@@ -54,6 +56,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
 
     onAddEmployee(newEmp);
     setName('');
+    setProjectId('');
     setPhone('');
     setEmail('');
     setRole('');
@@ -133,6 +136,22 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
               placeholder="เช่น Frontend Developer, Marketing Lead..."
               className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              รหัสงานที่รับผิดชอบ (Project ID)
+            </label>
+            <input
+              type="text"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              placeholder="เช่น AI-001, AI-002 หรือ PID-123 (คั่นด้วยจุลภาค)"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              ระบุรหัสงานตรงกับชีต Tasks เพื่อให้ระบบนับและเชื่อมโยงงานอัตโนมัติ
+            </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

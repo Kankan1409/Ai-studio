@@ -83,42 +83,53 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
   // Generate Tab-Separated Values (TSV) for Tasks ready to paste into Google Sheet cell A1
   const tasksTsv = [
     [
-      'ID',
-      'Category_Title',
-      'Project',
+      'Project ID',
+      'Category',
+      'Project Name',
+      'Description',
+      'Tech Stack / Tools',
+      'Start Date',
+      'Due Date',
+      'Duration',
+      'Owner',
       'Priority',
       'Status',
-      'Owner',
-      'OwnerPhone',
-      'OwnerEmail',
-      'StartDate',
-      'DueDate',
-      'Description',
-      'Progress',
+      'Result / Outcome',
+      'Project Link',
+      'Project Progress',
+      'Progress Bar',
     ].join('\t'),
     ...tasks.map((t) =>
       [
         t.id,
+        t.category || t.project || '',
         `"${t.title.replace(/"/g, '""')}"`,
-        t.project,
-        t.priority,
-        t.status,
-        t.owner,
-        t.ownerPhone || '',
-        t.ownerEmail || '',
+        `"${(t.description || '').replace(/"/g, '""')}"`,
+        `"${(t.techStack || '').replace(/"/g, '""')}"`,
         t.startDate || '',
         t.dueDate || '',
-        `"${(t.description || '').replace(/"/g, '""')}"`,
+        t.duration || '',
+        t.owner || '',
+        t.priority || 'Medium',
+        t.status || 'Todo',
+        `"${(t.resultOutcome || '').replace(/"/g, '""')}"`,
+        t.projectLink || '',
         t.progress || 0,
+        t.progressBar || `${t.progress || 0}%`,
       ].join('\t')
     ),
   ].join('\n');
 
-  // Generate TSV for Employees
+  // Generate TSV for Employees (4 Columns matching Google Sheet)
   const employeesTsv = [
-    ['ID', 'Name', 'Project', 'Phone', 'Email', 'Role', 'TasksCount'].join('\t'),
+    ['ID', 'Name', 'Phone', 'Project ID'].join('\t'),
     ...employees.map((e) =>
-      [e.id, e.name, e.project, e.phone, e.email, `"${e.role}"`, e.tasksCount || 0].join('\t')
+      [
+        e.id,
+        `"${e.name.replace(/"/g, '""')}"`,
+        e.phone || '',
+        `"${(e.projectId || e.project || '').replace(/"/g, '""')}"`,
+      ].join('\t')
     ),
   ].join('\n');
 
@@ -592,7 +603,7 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  มี 12 คอลัมน์หลัก (บรรทัดแรกคือชื่อ Header)
+                  มี 15 คอลัมน์หลักตามรูปแบบใน Google Sheets (บรรทัดแรกคือชื่อ Header)
                 </p>
               </div>
 
@@ -609,61 +620,73 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 ) : (
                   <>
                     <Copy className="h-4 w-4" />
-                    <span>คัดลอกตาราง Tasks ทั้งหมด</span>
+                    <span>คัดลอกตาราง Tasks ทั้งหมด (15 คอลัมน์)</span>
                   </>
                 )}
               </button>
             </div>
 
-            {/* Column Definitions explanation */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
+            {/* Column Definitions explanation (15 Columns A - O) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 text-xs">
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">A: ID</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">รหัสงาน เช่น PID-123</p>
+                <span className="font-mono font-bold text-indigo-600">A: Project ID</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">รหัสโปรเจกต์ เช่น PID-123</p>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">B: Category_Title</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">ชื่องาน / รายการ</p>
+                <span className="font-mono font-bold text-indigo-600">B: Category</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">หมวดหมู่งาน เช่น Website, Marketing</p>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">C: Project</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">แผนก/โครงการ เช่น แผนก/ITW</p>
+                <span className="font-mono font-bold text-indigo-600">C: Project Name</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ชื่อโปรเจกต์ / ชื่องาน</p>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">D: Priority</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">High / Medium / Low</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">E: Status</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">Completed, In progress, Blocked, Todo</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">F: Owner</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">ชื่อผู้รับผิดชอบ เช่น พี่ไมค์</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">G: OwnerPhone</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">เบอร์โทรศัพท์ผู้รับผิดชอบ</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">H: OwnerEmail</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">อีเมลผู้รับผิดชอบ</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">I: StartDate</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">วันที่เริ่ม (YYYY-MM-DD)</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">J: DueDate</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">วันกำหนดส่ง (YYYY-MM-DD)</p>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">K: Description</span>
+                <span className="font-mono font-bold text-indigo-600">D: Description</span>
                 <p className="text-slate-500 text-[11px] mt-0.5">รายละเอียดและข้อกำหนดงาน</p>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">L: Progress</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">เปอร์เซ็นต์ (0 - 100)</p>
+                <span className="font-mono font-bold text-indigo-600">E: Tech Stack / Tools</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">เครื่องมือ เช่น React, Tailwind, Figma</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">F: Start Date</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">วันที่เริ่ม (YYYY-MM-DD)</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">G: Due Date</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">วันกำหนดส่ง (YYYY-MM-DD)</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">H: Duration</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ระยะเวลา เช่น 5 วัน, 1 สัปดาห์</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">I: Owner</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ชื่อผู้รับผิดชอบ เช่น พี่ไมค์</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">J: Priority</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">High / Medium / Low</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">K: Status</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">Completed, In progress, Blocked, Todo</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">L: Result / Outcome</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ผลลัพธ์ของงาน / งานที่ส่งมอบ</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">M: Project Link</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ลิงก์ผลงาน หรือ เอกสารแนบ</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">N: Project Progress</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ตัวเลขเปอร์เซ็นต์ (0 - 100)</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">O: Progress Bar</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">แถบความคืบหน้า เช่น 100% หรือสูตร SPARKLINE</p>
               </div>
             </div>
 
@@ -672,27 +695,31 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
               <table className="w-full text-left text-xs text-slate-600">
                 <thead className="bg-slate-100 font-mono font-semibold text-[11px] text-slate-800 border-b border-slate-200">
                   <tr>
-                    <th className="p-2.5">ID</th>
-                    <th className="p-2.5">Category_Title</th>
-                    <th className="p-2.5">Project</th>
+                    <th className="p-2.5">Project ID</th>
+                    <th className="p-2.5">Category</th>
+                    <th className="p-2.5">Project Name</th>
+                    <th className="p-2.5">Tech Stack / Tools</th>
+                    <th className="p-2.5">Duration</th>
+                    <th className="p-2.5">Owner</th>
                     <th className="p-2.5">Priority</th>
                     <th className="p-2.5">Status</th>
-                    <th className="p-2.5">Owner</th>
-                    <th className="p-2.5">DueDate</th>
-                    <th className="p-2.5">Progress</th>
+                    <th className="p-2.5">Project Progress</th>
+                    <th className="p-2.5">Progress Bar</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
                   {tasks.slice(0, 8).map((t) => (
                     <tr key={t.id} className="hover:bg-slate-50">
                       <td className="p-2.5 font-bold text-indigo-600">{t.id}</td>
+                      <td className="p-2.5">{t.category || t.project}</td>
                       <td className="p-2.5 text-slate-800 font-medium">{t.title}</td>
-                      <td className="p-2.5">{t.project}</td>
+                      <td className="p-2.5 text-slate-500">{t.techStack || '-'}</td>
+                      <td className="p-2.5">{t.duration || '-'}</td>
+                      <td className="p-2.5 text-slate-800">{t.owner}</td>
                       <td className="p-2.5">{t.priority}</td>
                       <td className="p-2.5">{t.status}</td>
-                      <td className="p-2.5 text-slate-800">{t.owner}</td>
-                      <td className="p-2.5">{t.dueDate}</td>
                       <td className="p-2.5">{t.progress}%</td>
+                      <td className="p-2.5 text-emerald-600 font-semibold">{t.progressBar || `${t.progress}%`}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -714,7 +741,7 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  คอลัมน์ข้อมูลพนักงาน (ID, Name, Project, Phone, Email, Role)
+                  มี 4 คอลัมน์หลัก (ID, Name, Phone, Project ID)
                 </p>
               </div>
 
@@ -731,10 +758,30 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 ) : (
                   <>
                     <Copy className="h-4 w-4" />
-                    <span>คัดลอกตาราง Employees ทั้งหมด</span>
+                    <span>คัดลอกตาราง Employees ทั้งหมด (4 คอลัมน์)</span>
                   </>
                 )}
               </button>
+            </div>
+
+            {/* Column Definitions explanation (4 Columns A - D) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">A: ID</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">รหัสพนักงาน เช่น E01, E02</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">B: Name</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">ชื่อพนักงาน เช่น พี่ไมค์, พี่หน่อง</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">C: Phone</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">เบอร์โทรศัพท์ติดต่อ เช่น 081-445-6789</p>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <span className="font-mono font-bold text-indigo-600">D: Project ID</span>
+                <p className="text-slate-500 text-[11px] mt-0.5">โครงการที่สังกัด เช่น Project 1, แผนก/ITW</p>
+              </div>
             </div>
 
             {/* Preview table */}
@@ -744,10 +791,8 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                   <tr>
                     <th className="p-2.5">ID</th>
                     <th className="p-2.5">Name</th>
-                    <th className="p-2.5">Project</th>
                     <th className="p-2.5">Phone</th>
-                    <th className="p-2.5">Email</th>
-                    <th className="p-2.5">Role</th>
+                    <th className="p-2.5">Project ID</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -755,10 +800,8 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                     <tr key={e.id} className="hover:bg-slate-50">
                       <td className="p-2.5 font-bold text-indigo-600">{e.id}</td>
                       <td className="p-2.5 text-slate-800 font-medium">{e.name}</td>
-                      <td className="p-2.5">{e.project}</td>
                       <td className="p-2.5">{e.phone}</td>
-                      <td className="p-2.5 text-slate-500">{e.email}</td>
-                      <td className="p-2.5">{e.role}</td>
+                      <td className="p-2.5 font-mono text-indigo-600">{e.projectId || e.project}</td>
                     </tr>
                   ))}
                 </tbody>

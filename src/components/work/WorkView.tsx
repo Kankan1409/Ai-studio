@@ -16,22 +16,29 @@ import {
   ExternalLink,
   Wrench,
 } from 'lucide-react';
-import { Task, TaskStatus, Priority } from '../../types';
+import { Task, TaskStatus, Priority, Employee } from '../../types';
+import { isTaskAssignedToEmployee } from '../../utils/employeeTaskMatcher';
 
 interface WorkViewProps {
   tasks: Task[];
+  employees?: Employee[];
   onSelectTask: (task: Task) => void;
   onAddTaskClick: () => void;
   onUpdateTaskStatus: (taskId: string, newStatus: TaskStatus) => void;
   initialSearchQuery?: string;
+  filterEmployee?: Employee | null;
+  onClearEmployeeFilter?: () => void;
 }
 
 export const WorkView: React.FC<WorkViewProps> = ({
   tasks,
+  employees = [],
   onSelectTask,
   onAddTaskClick,
   onUpdateTaskStatus,
   initialSearchQuery = '',
+  filterEmployee,
+  onClearEmployeeFilter,
 }) => {
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [selectedProject, setSelectedProject] = useState<string>('all');
@@ -54,6 +61,11 @@ export const WorkView: React.FC<WorkViewProps> = ({
   // Filtered tasks
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
+      // If filtering by specific employee (from "ดูงาน" button in employee list)
+      if (filterEmployee && !isTaskAssignedToEmployee(task, filterEmployee)) {
+        return false;
+      }
+
       const matchSearch =
         task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         task.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -67,7 +79,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
 
       return matchSearch && matchProject && matchStatus && matchPriority;
     });
-  }, [tasks, searchQuery, selectedProject, selectedStatus, selectedPriority]);
+  }, [tasks, searchQuery, selectedProject, selectedStatus, selectedPriority, filterEmployee]);
 
   const getStatusBadge = (status: TaskStatus) => {
     switch (status) {
@@ -134,6 +146,34 @@ export const WorkView: React.FC<WorkViewProps> = ({
           <span>เพิ่มงาน</span>
         </button>
       </div>
+
+      {/* Filter Employee Banner if active */}
+      {filterEmployee && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-2xl bg-indigo-50/90 border border-indigo-200/80 px-4 py-3 text-xs text-indigo-950">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-indigo-900">กำลังแสดงเฉพาะงานของ:</span>
+            <span className="font-bold text-indigo-700 bg-white px-2.5 py-1 rounded-lg border border-indigo-200/70 shadow-2xs">
+              {filterEmployee.name} ({filterEmployee.id})
+            </span>
+            {(filterEmployee.projectId || filterEmployee.project) && (
+              <span className="text-indigo-600 font-mono text-[11px] bg-indigo-100/70 px-2 py-0.5 rounded">
+                Project ID: {filterEmployee.projectId || filterEmployee.project}
+              </span>
+            )}
+            <span className="text-indigo-700 font-medium">
+              (พบ {filteredTasks.length} งาน)
+            </span>
+          </div>
+          {onClearEmployeeFilter && (
+            <button
+              onClick={onClearEmployeeFilter}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-200 transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <span>✕ แสดงงานของทุกคน</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Search & Filter Toolbar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
@@ -388,20 +428,65 @@ export const WorkView: React.FC<WorkViewProps> = ({
 
                       {/* Owner */}
                       <td className="px-3.5 py-3">
-                        <div className="flex items-center gap-2">
-                          {task.ownerAvatar ? (
-                            <img
-                              src={task.ownerAvatar}
-                              alt={task.owner}
-                              className="h-6 w-6 rounded-full object-cover ring-1 ring-slate-200"
-                            />
-                          ) : (
-                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-700">
-                              {task.owner.slice(0, 1)}
+                        {(() => {
+                          const owners = task.owner
+                            ? task.owner
+                                .split(/[,;\n/|]+/)
+                                .map((s) => s.trim())
+                                .filter(Boolean)
+                            : [];
+                          if (owners.length === 0) {
+                            return <span className="text-[11px] text-slate-400">-</span>;
+                          }
+                          if (owners.length === 1) {
+                            const emp = employees.find((e) => e.name === owners[0]);
+                            const avatar = emp?.avatar || task.ownerAvatar;
+                            return (
+                              <div className="flex items-center gap-2">
+                                {avatar ? (
+                                  <img
+                                    src={avatar}
+                                    alt={owners[0]}
+                                    className="h-6 w-6 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
+                                  />
+                                ) : (
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 shrink-0">
+                                    {owners[0].slice(0, 1)}
+                                  </div>
+                                )}
+                                <span className="font-medium text-slate-700 truncate max-w-[140px]">{owners[0]}</span>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="flex items-center gap-1.5" title={owners.join(', ')}>
+                              <div className="flex -space-x-2 overflow-hidden shrink-0">
+                                {owners.slice(0, 3).map((name) => {
+                                  const emp = employees.find((e) => e.name === name);
+                                  return emp?.avatar ? (
+                                    <img
+                                      key={name}
+                                      src={emp.avatar}
+                                      alt={name}
+                                      className="inline-block h-6 w-6 rounded-full ring-2 ring-white object-cover"
+                                    />
+                                  ) : (
+                                    <div
+                                      key={name}
+                                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 ring-2 ring-white text-[10px] font-bold text-indigo-700"
+                                    >
+                                      {name.slice(0, 1)}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <span className="font-medium text-slate-700 text-xs truncate max-w-[130px]">
+                                {owners.slice(0, 2).join(', ')}
+                                {owners.length > 2 ? ` +${owners.length - 2}` : ''}
+                              </span>
                             </div>
-                          )}
-                          <span className="font-medium text-slate-700">{task.owner}</span>
-                        </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Actions & Project Link */}

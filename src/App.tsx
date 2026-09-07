@@ -19,6 +19,7 @@ import {
 } from './components';
 import { Task, Employee, ActiveTab, TaskStatus } from './types';
 import { INITIAL_TASKS, INITIAL_EMPLOYEES, PROJECTS_LIST } from './data/mockData';
+import { syncDataFromSource } from './utils/sheetSync';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -54,6 +55,24 @@ export default function App() {
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
 
+  // Auto-sync from Google Sheets if configured as live source
+  useEffect(() => {
+    const dataSource = localStorage.getItem('tm_data_source');
+    const gasUrl = localStorage.getItem('tm_gas_url');
+    if (dataSource === 'gas' && gasUrl?.trim()) {
+      syncDataFromSource(gasUrl.trim())
+        .then((result) => {
+          if (result.success) {
+            setTasks(result.tasks);
+            setEmployees(result.employees);
+          }
+        })
+        .catch((err) => {
+          console.warn('Auto-sync from sheet failed on startup:', err);
+        });
+    }
+  }, []);
+
   // Sync to localStorage
   useEffect(() => {
     localStorage.setItem('tm_tasks', JSON.stringify(tasks));
@@ -64,9 +83,10 @@ export default function App() {
   }, [employees]);
 
   // Handler: Update entire task
-  const handleUpdateTask = (updated: Task) => {
-    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    if (selectedTaskForDetail?.id === updated.id) {
+  const handleUpdateTask = (updated: Task, originalId?: string) => {
+    const targetId = originalId || updated.id;
+    setTasks((prev) => prev.map((t) => (t.id === targetId ? updated : t)));
+    if (selectedTaskForDetail?.id === targetId) {
       setSelectedTaskForDetail(updated);
     }
   };
@@ -120,6 +140,17 @@ export default function App() {
     setEmployees((prev) => [...prev, newEmployee]);
   };
 
+  // Handler: Update employee
+  const handleUpdateEmployee = (updated: Employee, originalId?: string) => {
+    const targetId = originalId || updated.id;
+    setEmployees((prev) => prev.map((e) => (e.id === targetId ? updated : e)));
+  };
+
+  // Handler: Delete employee
+  const handleDeleteEmployee = (empId: string) => {
+    setEmployees((prev) => prev.filter((e) => e.id !== empId));
+  };
+
   // Handler: Reset mock data
   const handleResetData = () => {
     setTasks(INITIAL_TASKS);
@@ -130,10 +161,12 @@ export default function App() {
   };
 
   const [workSearchQuery, setWorkSearchQuery] = useState<string>('');
+  const [filterEmployee, setFilterEmployee] = useState<Employee | null>(null);
 
   // Handler: Jump to work view filtered by employee
-  const handleFilterEmployeeTasks = (employeeName: string) => {
-    setWorkSearchQuery(employeeName);
+  const handleFilterEmployeeTasks = (employee: Employee) => {
+    setFilterEmployee(employee);
+    setWorkSearchQuery('');
     setActiveTab('work');
   };
 
@@ -166,7 +199,10 @@ export default function App() {
             {activeTab === 'work' && (
               <WorkView
                 tasks={tasks}
+                employees={employees}
                 initialSearchQuery={workSearchQuery}
+                filterEmployee={filterEmployee}
+                onClearEmployeeFilter={() => setFilterEmployee(null)}
                 onSelectTask={(task) => setSelectedTaskForDetail(task)}
                 onAddTaskClick={() => setIsAddTaskModalOpen(true)}
                 onUpdateTaskStatus={handleUpdateTaskStatus}
@@ -179,6 +215,8 @@ export default function App() {
                 tasks={tasks}
                 onAddEmployeeClick={() => setIsAddEmployeeModalOpen(true)}
                 onFilterEmployeeTasks={handleFilterEmployeeTasks}
+                onUpdateEmployee={handleUpdateEmployee}
+                onDeleteEmployee={handleDeleteEmployee}
               />
             )}
 
@@ -192,6 +230,10 @@ export default function App() {
                 employees={employees}
                 onResetData={handleResetData}
                 setActiveTab={setActiveTab}
+                onSyncData={(newTasks, newEmployees) => {
+                  setTasks(newTasks);
+                  setEmployees(newEmployees);
+                }}
               />
             )}
           </div>

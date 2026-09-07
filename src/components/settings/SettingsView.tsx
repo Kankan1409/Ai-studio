@@ -12,12 +12,14 @@ import {
   Globe,
 } from 'lucide-react';
 import { Task, Employee, ActiveTab } from '../../types';
+import { syncDataFromSource } from '../../utils/sheetSync';
 
 interface SettingsViewProps {
   tasks: Task[];
   employees: Employee[];
   onResetData: () => void;
   setActiveTab: (tab: ActiveTab) => void;
+  onSyncData?: (tasks: Task[], employees: Employee[]) => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -25,6 +27,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   employees,
   onResetData,
   setActiveTab,
+  onSyncData,
 }) => {
   const [gasUrl, setGasUrl] = useState(() => localStorage.getItem('tm_gas_url') || '');
   const [dataSource, setDataSource] = useState<'mock' | 'gas'>(() => {
@@ -32,6 +35,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   });
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<{ loading: boolean; message?: string; success?: boolean } | null>(
+    null
+  );
+  const [syncStatus, setSyncStatus] = useState<{ loading: boolean; message?: string; success?: boolean } | null>(
     null
   );
 
@@ -48,36 +54,69 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setTestStatus({
         loading: false,
         success: false,
-        message: 'กรุณากรอก Web App URL ของ Google Apps Script ก่อนทดสอบ',
+        message: 'กรุณากรอก Web App URL หรือ Google Sheets URL ก่อนทดสอบ',
       });
       return;
     }
 
     setTestStatus({ loading: true });
     try {
-      const res = await fetch(`${gasUrl.trim()}?action=getAll`, {
-        method: 'GET',
-        mode: 'cors',
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const result = await syncDataFromSource(gasUrl.trim());
+      if (result.success) {
         setTestStatus({
           loading: false,
           success: true,
-          message: `เชื่อมต่อสำเร็จ! ได้รับข้อมูลสถานะ: ${data.status || 'OK'}`,
+          message: `${result.message || 'เชื่อมต่อสำเร็จ!'} (อ่านข้อมูลจริงจากชีต)`,
         });
       } else {
         setTestStatus({
           loading: false,
           success: false,
-          message: `เชื่อมต่อไม่สำเร็จ (HTTP ${res.status}) ตรวจสอบสิทธิ์ Anyone ในการ Deploy`,
+          message: result.message || 'เชื่อมต่อไม่สำเร็จ กรุณาตรวจสอบ URL และสิทธิ์การเข้าถึง',
         });
       }
     } catch (err: any) {
       setTestStatus({
         loading: false,
         success: false,
-        message: `ข้อผิดพลาดในการเชื่อมต่อ: ตรวจสอบการตั้งค่า CORS และ Deployment ใน Apps Script (${err.message})`,
+        message: `ข้อผิดพลาดในการเชื่อมต่อ: ${err.message}`,
+      });
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (!gasUrl.trim()) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: 'กรุณากรอก Web App URL หรือ Google Sheets URL ก่อนกดซิงค์ข้อมูล',
+      });
+      return;
+    }
+
+    setSyncStatus({ loading: true });
+    try {
+      const result = await syncDataFromSource(gasUrl.trim());
+      if (result.success && onSyncData) {
+        onSyncData(result.tasks, result.employees);
+        setSyncStatus({
+          loading: false,
+          success: true,
+          message: `ซิงค์ข้อมูลสำเร็จ! ดึงข้อมูลจากชีตมาแล้ว ${result.tasks.length} งาน และ ${result.employees.length} พนักงาน`,
+        });
+        setTimeout(() => setSyncStatus(null), 5000);
+      } else {
+        setSyncStatus({
+          loading: false,
+          success: false,
+          message: result.message || 'ไม่สามารถดึงข้อมูลจากชีตได้ กรุณาตรวจสอบลิงก์หรือสิทธิ์แชร์',
+        });
+      }
+    } catch (err: any) {
+      setSyncStatus({
+        loading: false,
+        success: false,
+        message: `เกิดข้อผิดพลาดในการดึงข้อมูล: ${err.message}`,
       });
     }
   };
@@ -183,27 +222,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </label>
           </div>
 
-          {/* Web App URL input */}
+          {/* Web App URL or Google Sheet link input */}
           {dataSource === 'gas' && (
             <div className="space-y-2 pt-2 animate-in fade-in">
-              <label className="block text-xs font-semibold text-slate-700">
-                Google Apps Script Web App URL
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Google Apps Script Web App URL หรือ ลิงก์ Google Sheets
+                </label>
+                <span className="text-[11px] text-indigo-600 font-medium">รองรับทั้ง URL สคริปต์ และลิงก์ชีตโดยตรง</span>
+              </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="url"
                   value={gasUrl}
                   onChange={(e) => setGasUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                  placeholder="เช่น https://script.google.com/.../exec หรือ https://docs.google.com/spreadsheets/d/..."
                   className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={testStatus?.loading}
+                  disabled={testStatus?.loading || syncStatus?.loading}
                   className="rounded-xl border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition-colors shrink-0"
                 >
                   {testStatus?.loading ? 'กำลังทดสอบ...' : 'ทดสอบเชื่อมต่อ'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={testStatus?.loading || syncStatus?.loading}
+                  className="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-xs transition-all shrink-0 flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${syncStatus?.loading ? 'animate-spin' : ''}`} />
+                  <span>{syncStatus?.loading ? 'กำลังดึงข้อมูล...' : 'ดึงข้อมูลสดจากชีต'}</span>
                 </button>
               </div>
 
@@ -221,6 +272,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
                   )}
                   <span>{testStatus.message}</span>
+                </div>
+              )}
+
+              {syncStatus && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                    syncStatus.success
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {syncStatus.success ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{syncStatus.message}</span>
                 </div>
               )}
             </div>

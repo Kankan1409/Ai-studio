@@ -30,7 +30,7 @@ interface WorkDetailModalProps {
   employees: Employee[];
   isOpen: boolean;
   onClose: () => void;
-  onUpdateTask: (updated: Task) => void;
+  onUpdateTask: (updated: Task, originalId?: string) => void;
   onDeleteTask: (taskId: string) => void;
 }
 
@@ -43,6 +43,7 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
   onDeleteTask,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [editedId, setEditedId] = useState(task?.id || '');
   const [editedTitle, setEditedTitle] = useState(task?.title || '');
   const [editedProject, setEditedProject] = useState(task?.project || '');
   const [editedCategory, setEditedCategory] = useState(task?.category || task?.project || '');
@@ -50,6 +51,7 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
   const [editedPriority, setEditedPriority] = useState<Priority>(task?.priority || 'Medium');
   const [editedStatus, setEditedStatus] = useState<TaskStatus>(task?.status || 'Todo');
   const [editedOwner, setEditedOwner] = useState(task?.owner || '');
+  const [editedOwners, setEditedOwners] = useState<string[]>([]);
   const [editedDescription, setEditedDescription] = useState(task?.description || '');
   const [editedStartDate, setEditedStartDate] = useState(task?.startDate || '');
   const [editedDueDate, setEditedDueDate] = useState(task?.dueDate || '');
@@ -61,9 +63,18 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
   const [newSubtaskAssignee, setNewSubtaskAssignee] = useState(task?.owner || employees[0]?.name || '');
   const [subtaskAssigneeFilter, setSubtaskAssigneeFilter] = useState<string>('all');
 
+  const parseOwners = (ownerStr?: string): string[] => {
+    if (!ownerStr) return [];
+    return ownerStr
+      .split(/[,;\n/|]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
   // Sync state when task changes
   useEffect(() => {
     if (task) {
+      setEditedId(task.id);
       setEditedTitle(task.title);
       setEditedProject(task.project);
       setEditedCategory(task.category || task.project || '');
@@ -71,6 +82,8 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
       setEditedPriority(task.priority);
       setEditedStatus(task.status);
       setEditedOwner(task.owner);
+      const initialOwners = parseOwners(task.owner);
+      setEditedOwners(initialOwners.length > 0 ? initialOwners : task.owner ? [task.owner] : []);
       setEditedDescription(task.description || '');
       setEditedStartDate(task.startDate || '');
       setEditedDueDate(task.dueDate || '');
@@ -180,19 +193,27 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
   };
 
   const handleSaveEdit = () => {
-    const ownerData = employees.find((e) => e.name === editedOwner);
+    const finalOwnerString =
+      editedOwners.length > 0 ? editedOwners.join(', ') : editedOwner || task.owner;
+    const selectedOwnerObjs = employees.filter((e) => editedOwners.includes(e.name));
+    const ownerPhones = selectedOwnerObjs.map((e) => e.phone).filter(Boolean).join(', ');
+    const ownerEmails = selectedOwnerObjs.map((e) => e.email).filter(Boolean).join(', ');
+    const ownerAvatar = selectedOwnerObjs[0]?.avatar;
+
+    const finalId = editedId.trim() || task.id;
     const updated: Task = {
       ...task,
+      id: finalId,
       title: editedTitle,
       project: editedProject,
       category: editedCategory || editedProject,
       techStack: editedTechStack,
       priority: editedPriority,
       status: editedStatus,
-      owner: editedOwner,
-      ownerPhone: ownerData ? ownerData.phone : task.ownerPhone,
-      ownerEmail: ownerData ? ownerData.email : task.ownerEmail,
-      ownerAvatar: ownerData ? ownerData.avatar : task.ownerAvatar,
+      owner: finalOwnerString,
+      ownerPhone: ownerPhones || task.ownerPhone,
+      ownerEmail: ownerEmails || task.ownerEmail,
+      ownerAvatar: ownerAvatar || task.ownerAvatar,
       description: editedDescription,
       startDate: editedStartDate,
       dueDate: editedDueDate,
@@ -201,8 +222,9 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
       projectLink: editedProjectLink,
       updatedAt: new Date().toISOString(),
     };
-    onUpdateTask(updated);
+    onUpdateTask(updated, task.id);
     setIsEditing(false);
+    onClose();
   };
 
   const completedSubtasksCount = subtasks.filter((s) => s.completed).length;
@@ -226,9 +248,24 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
         {/* Top Header Banner */}
         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-sm font-bold tracking-wider text-indigo-300 bg-indigo-950/80 px-2.5 py-1 rounded-md border border-indigo-700/50">
-              {task.id}
-            </span>
+            {isEditing ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-mono font-bold text-indigo-300">ID:</span>
+                <input
+                  id="workdetail-edit-id-input"
+                  type="text"
+                  value={editedId}
+                  onChange={(e) => setEditedId(e.target.value)}
+                  placeholder="รหัสงาน..."
+                  className="font-mono text-xs font-bold text-indigo-200 bg-slate-800 px-2.5 py-1 rounded-md border border-indigo-500/70 focus:outline-none focus:ring-1 focus:ring-indigo-400 w-28"
+                  title="แก้ไขรหัสงาน"
+                />
+              </div>
+            ) : (
+              <span className="font-mono text-sm font-bold tracking-wider text-indigo-300 bg-indigo-950/80 px-2.5 py-1 rounded-md border border-indigo-700/50">
+                {task.id}
+              </span>
+            )}
             <span className="text-xs text-slate-300 font-medium">รายละเอียดงาน (workdetail)</span>
           </div>
 
@@ -318,7 +355,19 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
               </div>
             ) : (
               <div className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-900 mb-1">
+                      รหัสงาน (Work ID)
+                    </label>
+                    <input
+                      type="text"
+                      value={editedId}
+                      onChange={(e) => setEditedId(e.target.value)}
+                      placeholder="เช่น AI-001, PID-101"
+                      className="w-full rounded-lg border border-indigo-300 bg-white px-3 py-2 font-mono text-xs font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-medium text-slate-700 mb-1">
                       ชื่อโปรเจกต์ / ชื่องาน (Project Name / Title)
@@ -440,55 +489,122 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Owner Details */}
             <div className="rounded-xl border border-slate-200 p-4 bg-white">
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                ผู้รับผิดชอบ (Owner)
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  ผู้รับผิดชอบหลัก (Lead Owners)
+                </div>
+                {isEditing && (
+                  <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                    เลือกแล้ว {editedOwners.length} คน
+                  </span>
+                )}
               </div>
+
               {!isEditing ? (
-                <div className="flex items-start gap-3">
-                  {task.ownerAvatar ? (
-                    <img
-                      src={task.ownerAvatar}
-                      alt={task.owner}
-                      className="h-10 w-10 rounded-full object-cover ring-2 ring-slate-100"
-                    />
-                  ) : (
-                    <div className="h-10 w-10 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-sm">
-                      {task.owner.slice(0, 1)}
-                    </div>
-                  )}
-                  <div className="text-xs space-y-1">
-                    <p className="font-semibold text-slate-900 text-sm">{task.owner}</p>
-                    {ownerObj && (
-                      <p className="text-slate-500">{ownerObj.role}</p>
-                    )}
-                    {task.ownerPhone && (
-                      <p className="text-slate-500 flex items-center gap-1">
-                        <Phone className="h-3 w-3 text-slate-400" /> {task.ownerPhone}
-                      </p>
-                    )}
-                    {task.ownerEmail && (
-                      <p className="text-slate-500 flex items-center gap-1">
-                        <Mail className="h-3 w-3 text-slate-400" /> {task.ownerEmail}
-                      </p>
-                    )}
-                  </div>
+                <div className="space-y-2.5">
+                  {(() => {
+                    const taskOwners = parseOwners(task.owner);
+                    if (taskOwners.length === 0) {
+                      return <span className="text-xs text-slate-400 italic">ไม่ได้ระบุผู้รับผิดชอบ</span>;
+                    }
+                    return taskOwners.map((ownerName) => {
+                      const emp = employees.find((e) => e.name === ownerName);
+                      const hasCustomAvatar = ownerName === task.owner && task.ownerAvatar;
+                      return (
+                        <div
+                          key={ownerName}
+                          className="flex items-start gap-2.5 p-2 rounded-xl bg-slate-50 border border-slate-100"
+                        >
+                          {emp?.avatar || hasCustomAvatar ? (
+                            <img
+                              src={emp?.avatar || task.ownerAvatar}
+                              alt={ownerName}
+                              className="h-8 w-8 rounded-full object-cover ring-2 ring-white shrink-0 shadow-2xs"
+                            />
+                          ) : (
+                            <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs shrink-0 ring-2 ring-white shadow-2xs">
+                              {ownerName.slice(0, 1)}
+                            </div>
+                          )}
+                          <div className="text-xs space-y-0.5 min-w-0 flex-1">
+                            <p className="font-bold text-slate-900 truncate text-xs">{ownerName}</p>
+                            {emp?.project && (
+                              <p className="text-[11px] text-indigo-600 font-medium">{emp.project} {emp.role ? `• ${emp.role}` : ''}</p>
+                            )}
+                            {emp?.phone && (
+                              <p className="text-slate-500 flex items-center gap-1 text-[10px]">
+                                <Phone className="h-2.5 w-2.5 text-slate-400" /> {emp.phone}
+                              </p>
+                            )}
+                            {emp?.email && (
+                              <p className="text-slate-500 flex items-center gap-1 text-[10px]">
+                                <Mail className="h-2.5 w-2.5 text-slate-400" /> {emp.email}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               ) : (
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    เลือกผู้รับผิดชอบ
-                  </label>
-                  <select
-                    value={editedOwner}
-                    onChange={(e) => setEditedOwner(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {employees.map((emp) => (
-                      <option key={emp.id} value={emp.name}>
-                        {emp.name} ({emp.project})
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-2">
+                  {/* Selected badges */}
+                  <div className="flex flex-wrap gap-1 p-1.5 bg-slate-50 border border-slate-200 rounded-lg min-h-8 items-center">
+                    {editedOwners.length === 0 ? (
+                      <span className="text-[11px] text-slate-400 italic">กรุณาคลิกเลือกพนักงานด้านล่าง</span>
+                    ) : (
+                      editedOwners.map((name) => (
+                        <span
+                          key={name}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-white text-indigo-900 border border-indigo-200 rounded-md text-xs font-semibold shadow-2xs"
+                        >
+                          👤 {name}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditedOwners((prev) => prev.filter((n) => n !== name))
+                            }
+                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Checkbox grid */}
+                  <div className="grid grid-cols-2 gap-1 max-h-36 overflow-y-auto p-1 border border-slate-200 rounded-lg bg-white">
+                    {employees.map((emp) => {
+                      const isSel = editedOwners.includes(emp.name);
+                      return (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          onClick={() =>
+                            setEditedOwners((prev) =>
+                              isSel ? prev.filter((n) => n !== emp.name) : [...prev, emp.name]
+                            )
+                          }
+                          className={`flex items-center gap-1.5 p-1.5 rounded-md text-left text-xs transition-all cursor-pointer ${
+                            isSel
+                              ? 'bg-indigo-600 text-white font-semibold'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <div
+                            className={`h-3.5 w-3.5 rounded flex items-center justify-center text-[9px] shrink-0 ${
+                              isSel ? 'bg-white text-indigo-700 font-bold' : 'border border-slate-300'
+                            }`}
+                          >
+                            {isSel && '✓'}
+                          </div>
+                          <span className="truncate">{emp.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

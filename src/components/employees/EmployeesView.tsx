@@ -7,14 +7,26 @@ import {
   FolderOpen,
   Eye,
   X,
+  Layers,
+  Edit2,
+  Trash2,
 } from 'lucide-react';
 import { Employee, Task } from '../../types';
+import {
+  getTasksForEmployee,
+  getEmployeeTaskCount,
+  parseProjectIds,
+  getEmployeeAssignedItems,
+} from '../../utils/employeeUtils';
+import { EditEmployeeModal } from './EditEmployeeModal';
 
 interface EmployeesViewProps {
   employees: Employee[];
   tasks: Task[];
   onAddEmployeeClick: () => void;
-  onFilterEmployeeTasks: (employeeName: string) => void;
+  onFilterEmployeeTasks: (employee: Employee) => void;
+  onUpdateEmployee?: (updated: Employee, originalId?: string) => void;
+  onDeleteEmployee?: (empId: string) => void;
 }
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
@@ -22,10 +34,14 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
   tasks,
   onAddEmployeeClick,
   onFilterEmployeeTasks,
+  onUpdateEmployee,
+  onDeleteEmployee,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string>('all');
   const [activeEmployeeModal, setActiveEmployeeModal] = useState<Employee | null>(null);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
 
   // Departments list
   const departments = useMemo(() => {
@@ -48,9 +64,9 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     });
   }, [employees, searchQuery, selectedDept]);
 
-  // Calculate tasks per employee dynamically
-  const getEmployeeTasks = (employeeName: string) => {
-    return tasks.filter((t) => t.owner === employeeName);
+  // Calculate tasks per employee dynamically (รองรับทั้งอิงตามชื่อ Owner และอิงตามรหัส Project ID เช่น "AI-001, AI-002")
+  const getEmployeeTasks = (emp: Employee) => {
+    return getEmployeeAssignedItems(emp, tasks);
   };
 
   return (
@@ -140,9 +156,10 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </tr>
               ) : (
                 filteredEmployees.map((emp) => {
-                  const empTasks = getEmployeeTasks(emp.name);
+                  const empTasks = getEmployeeTasks(emp);
                   const completedCount = empTasks.filter((t) => t.status === 'Completed').length;
-                  const taskCount = empTasks.length > 0 ? empTasks.length : (emp.tasksCount || 0);
+                  const taskCount = getEmployeeTaskCount(emp, tasks);
+                  const assignedProjectIds = parseProjectIds(emp.projectId || emp.project);
 
                   return (
                     <tr
@@ -179,11 +196,23 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                         </div>
                       </td>
 
-                      {/* Project / Department */}
+                      {/* Project / Department / Project IDs */}
                       <td className="px-5 py-3.5 text-slate-600 font-medium">
-                        <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-[11px] text-slate-700">
-                          {emp.project}
-                        </span>
+                        <div className="flex items-center gap-1.5 max-w-[280px]">
+                          {assignedProjectIds.length > 0 ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 border border-indigo-200/80 px-2.5 py-1 text-[11px] font-mono font-medium text-indigo-700"
+                              title={assignedProjectIds.join(', ')}
+                            >
+                              <Layers className="h-3 w-3 text-indigo-500 shrink-0" />
+                              <span className="truncate">{assignedProjectIds.join(', ')}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600">
+                              {emp.project || '-'}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Phone / Number */}
@@ -219,6 +248,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
+                            id={`emp-view-btn-${emp.id}`}
                             onClick={() => setActiveEmployeeModal(emp)}
                             className="inline-flex items-center gap-1 text-xs text-slate-700 hover:text-indigo-700 font-medium bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
                             title="ดูรายละเอียดข้อมูลพนักงาน"
@@ -228,7 +258,28 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => onFilterEmployeeTasks(emp.name)}
+                            id={`emp-edit-btn-${emp.id}`}
+                            onClick={() => setEditingEmployee(emp)}
+                            className="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 font-medium bg-amber-50 hover:bg-amber-100 border border-amber-200/80 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                            title="แก้ไขข้อมูลพนักงาน"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                            <span>แก้ไข</span>
+                          </button>
+                          <button
+                            type="button"
+                            id={`emp-delete-btn-${emp.id}`}
+                            onClick={() => setDeletingEmployee(emp)}
+                            className="inline-flex items-center gap-1 text-xs text-rose-700 hover:text-rose-900 font-medium bg-rose-50 hover:bg-rose-100 border border-rose-200/80 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                            title="ลบพนักงาน"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>ลบ</span>
+                          </button>
+                          <button
+                            type="button"
+                            id={`emp-tasks-btn-${emp.id}`}
+                            onClick={() => onFilterEmployeeTasks(emp)}
                             className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
                             title="ดูงานทั้งหมดที่พนักงานคนนี้รับผิดชอบ"
                           >
@@ -320,53 +371,185 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
 
             {/* Tasks assigned */}
             <div>
-              <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                งานที่ได้รับมอบหมาย ({getEmployeeTasks(activeEmployeeModal.name).length} รายการ)
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  งานที่ได้รับมอบหมาย ({getEmployeeTasks(activeEmployeeModal).length} รายการ)
+                </div>
+                <span className="text-[10px] text-indigo-600 font-medium">
+                  จับคู่อัตโนมัติ: Project ID + Owner
+                </span>
               </div>
-              <div className="max-h-48 overflow-y-auto space-y-1.5">
-                {getEmployeeTasks(activeEmployeeModal.name).map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs"
-                  >
-                    <div className="min-w-0 pr-2">
-                      <span className="font-mono text-[11px] text-slate-400 mr-2">{t.id}</span>
-                      <span className="font-medium text-slate-800 truncate">{t.title}</span>
-                    </div>
-                    <span
-                      className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full ${
-                        t.status === 'Completed'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : t.status === 'In progress'
-                          ? 'bg-blue-50 text-blue-700'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {t.status}
-                    </span>
+
+              {/* Project ID Badges from Sheet Column D */}
+              {parseProjectIds(activeEmployeeModal.projectId || activeEmployeeModal.project).length > 0 && (
+                <div className="mb-2.5 p-2 rounded-lg bg-indigo-50/50 border border-indigo-100/80">
+                  <div className="text-[10px] font-semibold text-indigo-800 mb-1 flex items-center gap-1">
+                    <Layers className="h-3 w-3 text-indigo-600" />
+                    รหัสงานในชีต (Project ID):
                   </div>
-                ))}
+                  <div className="flex flex-wrap gap-1">
+                    {parseProjectIds(activeEmployeeModal.projectId || activeEmployeeModal.project).map((pId) => (
+                      <span
+                        key={pId}
+                        className="font-mono text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded"
+                      >
+                        {pId}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="max-h-48 overflow-y-auto space-y-1.5">
+                {getEmployeeTasks(activeEmployeeModal).length === 0 ? (
+                  <div className="p-4 text-center text-slate-400 text-xs bg-slate-50 rounded-lg">
+                    ยังไม่มีรายการงานที่เชื่อมโยงกับรหัส Project ID หรือชื่อพนักงานนี้
+                  </div>
+                ) : (
+                  getEmployeeTasks(activeEmployeeModal).map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <span className="font-mono text-[11px] font-medium text-indigo-600 mr-2">{t.id}</span>
+                        <span className="font-medium text-slate-800 truncate">{t.title}</span>
+                      </div>
+                      <span
+                        className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full ${
+                          t.status === 'Completed'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : t.status === 'In progress'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {t.status}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    const empName = activeEmployeeModal.name;
-                    setActiveEmployeeModal(null);
-                    onFilterEmployeeTasks(empName);
-                  }}
-                  className="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-medium text-white transition-colors"
-                >
-                  ดูในหน้ารายการงาน
-                </button>
-                <button
-                  onClick={() => setActiveEmployeeModal(null)}
-                  className="rounded-xl border border-slate-200 hover:bg-slate-50 px-4 py-2 text-xs font-medium text-slate-700 transition-colors"
-                >
-                  ปิด
-                </button>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = activeEmployeeModal;
+                      setActiveEmployeeModal(null);
+                      setEditingEmployee(emp);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 font-medium bg-amber-50 hover:bg-amber-100 border border-amber-200/80 px-3 py-2 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                    <span>แก้ไขข้อมูล</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = activeEmployeeModal;
+                      setActiveEmployeeModal(null);
+                      setDeletingEmployee(emp);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-rose-700 hover:text-rose-900 font-medium bg-rose-50 hover:bg-rose-100 border border-rose-200/80 px-3 py-2 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>ลบพนักงาน</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const emp = activeEmployeeModal;
+                      setActiveEmployeeModal(null);
+                      onFilterEmployeeTasks(emp);
+                    }}
+                    className="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-xs font-medium text-white transition-colors cursor-pointer"
+                  >
+                    ดูในหน้ารายการงาน
+                  </button>
+                  <button
+                    onClick={() => setActiveEmployeeModal(null)}
+                    className="rounded-xl border border-slate-200 hover:bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors"
+                  >
+                    ปิด
+                  </button>
+                </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Employee Modal */}
+      {editingEmployee && (
+        <EditEmployeeModal
+          isOpen={!!editingEmployee}
+          employee={editingEmployee}
+          onClose={() => setEditingEmployee(null)}
+          onUpdateEmployee={(updated, origId) => {
+            if (onUpdateEmployee) {
+              onUpdateEmployee(updated, origId);
+            }
+          }}
+          onDeleteEmployee={(empId) => {
+            if (onDeleteEmployee) {
+              onDeleteEmployee(empId);
+            }
+          }}
+          projects={departments}
+        />
+      )}
+
+      {/* Delete Employee Confirmation Modal */}
+      {deletingEmployee && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
+          onClick={() => setDeletingEmployee(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200 p-6 space-y-4 animate-in fade-in"
+          >
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-slate-900">ลบรายชื่อพนักงาน</h4>
+                <p className="text-xs text-slate-500">ยืนยันการนำพนักงานออกจากระบบ</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              คุณต้องการลบ <strong>{deletingEmployee.name}</strong> (รหัส {deletingEmployee.id})
+              ใช่หรือไม่? ข้อมูลพนักงานจะถูกลบออกจากระบบทันที
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeletingEmployee(null)}
+                className="px-4 py-2 text-xs font-medium rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                id="confirm-delete-emp-btn"
+                onClick={() => {
+                  if (onDeleteEmployee) {
+                    onDeleteEmployee(deletingEmployee.id);
+                  }
+                  setDeletingEmployee(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer"
+              >
+                ยืนยันลบ
+              </button>
             </div>
           </div>
         </div>

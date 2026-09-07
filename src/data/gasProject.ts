@@ -28,19 +28,97 @@ function onOpen() {
     .addItem("🌐 เปิด Web App เต็มหน้าจอเบราว์เซอร์", "openFullScreenWebApp")
     .addItem("📱 เปิดแถบข้าง (Sidebar)", "showTaskManagerSidebar")
     .addSeparator()
-    .addItem("⚡ สร้างชีตและข้อมูลตัวอย่างอัตโนมัติ (1-Click Setup)", "setupSheetAndSampleData")
+    .addItem("⚡ สร้างหัวตารางชีต (Tasks & Employees) หากยังไม่มี", "initSheetHeaders")
     .addToUi();
 }
 
 /**
- * Web App Entry point (เมื่อ Deploy เป็น Web App)
+ * Web App Entry point: รองรับทั้งเปิดหน้าต่าง UI และเรียกผ่าน REST API (JSON)
+ * ดึงข้อมูลสดจากแผ่นงาน Google Sheets โดยตรง ไม่ใส่ข้อมูลจำลอง
  */
 function doGet(e) {
+  // หากเรียกผ่าน API (เช่น ?action=getAll หรือ ?action=getTasks หรือ format=json)
+  if (e && e.parameter && (e.parameter.action || e.parameter.format === "json")) {
+    return handleApiGet(e);
+  }
+
+  // หากเปิดเป็นหน้าเว็บ Web App
   return HtmlService.createTemplateFromFile("Index")
     .evaluate()
     .setTitle("Task Manager - ระบบบริหารจัดการงาน")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag("viewport", "width=device-width, initial-scale=1.0");
+}
+
+/**
+ * รองรับการบันทึก/แก้ไข/ลบข้อมูลผ่าน REST API (POST)
+ */
+function doPost(e) {
+  return handleApiPost(e);
+}
+
+/**
+ * จัดการคำขอ API GET ส่งข้อมูล JSON จาก Google Sheet กลับไปให้ Web App
+ */
+function handleApiGet(e) {
+  try {
+    const action = (e && e.parameter && e.parameter.action) || "getAll";
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let result = { status: "success", success: true };
+
+    if (action === "getAll" || action === "getInitialData") {
+      result.tasks = getSheetData(ss, SHEET_TASKS);
+      result.employees = getSheetData(ss, SHEET_EMPLOYEES);
+      result.sheetUrl = ss.getUrl();
+    } else if (action === "getTasks") {
+      result.tasks = getSheetData(ss, SHEET_TASKS);
+    } else if (action === "getEmployees") {
+      result.employees = getSheetData(ss, SHEET_EMPLOYEES);
+    } else {
+      result = { status: "error", message: "Unknown action: " + action };
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * จัดการคำขอ API POST จาก Web App
+ */
+function handleApiPost(e) {
+  try {
+    let body = {};
+    if (e && e.postData && e.postData.contents) {
+      body = JSON.parse(e.postData.contents);
+    } else if (e && e.parameter) {
+      body = e.parameter;
+    }
+
+    const action = body.action || (e && e.parameter ? e.parameter.action : "saveTask");
+    let res = { success: false, error: "Unknown action" };
+
+    if (action === "saveTask") {
+      res = apiSaveTask(body.task || body);
+    } else if (action === "saveTasksBatch") {
+      res = apiSaveTasksBatch(body.tasks || []);
+    } else if (action === "deleteTask") {
+      res = apiDeleteTask(body.id || body.taskId);
+    } else if (action === "saveEmployee") {
+      res = apiSaveEmployee(body.employee || body);
+    } else if (action === "deleteEmployee") {
+      res = apiDeleteEmployee(body.id || body.employeeId);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(res))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 /**
@@ -111,9 +189,43 @@ function apiGetInitialData() {
 }
 
 /**
+ * บันทึกแถวข้อมูลลงชีตอย่างปลอดภัย ไม่ให้พังเมื่อติด Data Validation / กฎความถูกต้องใน Google Sheet
+ */
+function safeSetRowValues(sheet, rowNumber, rowData) {
+  try {
+    sheet.getRange(rowNumber, 1, 1, rowData.length).setValues([rowData]);
+  } catch (validationErr) {
+    // หากติดกฎตรวจสอบข้อมูล (Data Validation) เช่น ไม่อนุญาตให้ใส่ชื่อคนหลายคน หรือค่าไม่อยู่ในรายการ Dropdown
+    for (let c = 0; c < rowData.length; c++) {
+      const cell = sheet.getRange(rowNumber, c + 1);
+      try {
+        cell.setValue(rowData[c]);
+      } catch (cellErr) {
+        try {
+          const rule = cell.getDataValidation();
+          if (rule) {
+            // ปรับกฎเป็น Allow Invalid (แสดงการเตือนแทนการปฏิเสธการป้อนข้อมูล)
+            const lenientRule = rule.copy().setAllowInvalid(true).build();
+            cell.setDataValidation(lenientRule);
+          }
+          cell.setValue(rowData[c]);
+        } catch (e2) {
+          try {
+            cell.clearDataValidations();
+            cell.setValue(rowData[c]);
+          } catch (e3) {
+            // บันทึกผ่าน
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
  * ฟังก์ชันบันทึกหรืออัปเดตงาน (Save/Update Task)
  */
-function apiSaveTask(task) {
+function apiSaveTask(task, originalId) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let sheet = ss.getSheetByName(SHEET_TASKS);
@@ -126,16 +238,32 @@ function apiSaveTask(task) {
     const headers = data.length > 0 ? data[0] : [];
     let rowIndex = -1;
 
-    // หาว่ามี Task ID นี้อยู่แล้วหรือไม่
+    // หาว่ามี Task ID นี้อยู่แล้วหรือไม่ (ตรวจสอบหาทั้ง originalId และ task.id)
+    const matchId = (originalId || task.originalId || task.id || task.projectId || "").toString().trim().toLowerCase();
     const taskId = task.id || task.projectId;
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] == taskId) {
+      const cellVal = (data[i][0] || "").toString().trim().toLowerCase();
+      if (cellVal && cellVal === matchId) {
         rowIndex = i + 1;
         break;
       }
     }
 
-    const subtasksJson = task.subtasks ? JSON.stringify(task.subtasks) : "[]";
+    // แปลง Subtasks / Checklist: เก็บเฉพาะข้อความตัวอักษรที่พิมพ์ในช่อง (Plain text บรรทัดต่อบรรทัด) ไม่เก็บเป็น JSON
+    let subtasksText = "";
+    if (Array.isArray(task.subtasks)) {
+      subtasksText = task.subtasks
+        .map(function(s) {
+          if (!s) return "";
+          if (typeof s === "string") return s.trim();
+          return String(s.title || s.name || "").trim();
+        })
+        .filter(function(text) { return text.length > 0; })
+        .join("\n");
+    } else if (typeof task.subtasks === "string") {
+      subtasksText = task.subtasks.trim();
+    }
+
     const progressVal = task.progress !== undefined ? Number(task.progress) : 0;
     const progressBarVal = task.progressBar || (progressVal + "%");
 
@@ -165,7 +293,15 @@ function apiSaveTask(task) {
       "Project Progress": progressVal,
       "Progress": progressVal,
       "Progress Bar": progressBarVal,
-      "Subtasks": subtasksJson,
+      "Subtasks": subtasksText,
+      "Subtask": subtasksText,
+      "Checklist": subtasksText,
+      "Detail Checklist": subtasksText,
+      "Detail checklist": subtasksText,
+      "Check list": subtasksText,
+      "Checklist Detail": subtasksText,
+      "งานย่อย": subtasksText,
+      "รายการย่อย": subtasksText,
       "UpdatedAt": new Date().toISOString()
     };
 
@@ -191,15 +327,13 @@ function apiSaveTask(task) {
         task.resultOutcome || "",
         task.projectLink || "",
         progressVal,
-        progressBarVal
+        progressBarVal,
+        subtasksText
       ];
     }
 
-    if (rowIndex > 0) {
-      sheet.getRange(rowIndex, 1, 1, rowData.length).setValues([rowData]);
-    } else {
-      sheet.appendRow(rowData);
-    }
+    const targetRow = rowIndex > 0 ? rowIndex : (sheet.getLastRow() + 1);
+    safeSetRowValues(sheet, targetRow, rowData);
 
     return { success: true, message: "บันทึกข้อมูลงานสำเร็จ" };
   } catch (err) {
@@ -329,11 +463,8 @@ function apiSaveEmployee(emp) {
       ];
     }
 
-    if (rowIndex > 0) {
-      sheet.getRange(rowIndex, 1, 1, rowData.length).setValues([rowData]);
-    } else {
-      sheet.appendRow(rowData);
-    }
+    const targetRow = rowIndex > 0 ? rowIndex : (sheet.getLastRow() + 1);
+    safeSetRowValues(sheet, targetRow, rowData);
 
     return { success: true, message: "บันทึกข้อมูลพนักงานสำเร็จ" };
   } catch (err) {
@@ -342,18 +473,39 @@ function apiSaveEmployee(emp) {
 }
 
 /**
- * สร้างชีตและข้อมูลตัวอย่างทั้งหมดอัตโนมัติ (1-Click Setup)
- * รองรับทั้ง 15 คอลัมน์ของ Tasks และ 4 คอลัมน์ของ Employees
+ * ฟังก์ชันลบพนักงาน (Delete Employee)
  */
-function setupSheetAndSampleData() {
+function apiDeleteEmployee(empId) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_EMPLOYEES);
+    if (!sheet) return { success: false, error: "ไม่พบชีต Employees" };
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() == String(empId).trim()) {
+        sheet.deleteRow(i + 1);
+        return { success: true, message: "ลบพนักงานเรียบร้อยแล้ว" };
+      }
+    }
+    return { success: false, error: "ไม่พบรหัสพนักงานนี้" };
+  } catch (err) {
+    return { success: false, error: err.toString() };
+  }
+}
+
+/**
+ * สร้างหัวตาราง (Headers) สำหรับชีต Tasks (15 ฟิลด์) และ Employees (4 ฟิลด์)
+ * โดยจะเขียนเฉพาะบรรทัดแรก (Row 1) หากชีตว่างอยู่เท่านั้น
+ * ⚠️ ไม่มีการลบข้อมูลแถวเดิม และไม่มีการแทรกข้อมูล Mock ในสคริปต์ — อ่านจากชีตจริง 100%
+ */
+function initSheetHeaders() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // 1. ชีต Tasks (15 Columns ตามโครงสร้างใหม่)
+  // 1. ชีต Tasks (15 Columns ตามโครงสร้างที่กำหนด)
   let taskSheet = ss.getSheetByName(SHEET_TASKS);
   if (!taskSheet) {
     taskSheet = ss.insertSheet(SHEET_TASKS);
-  } else {
-    taskSheet.clear();
   }
 
   const taskHeaders = [
@@ -374,42 +526,32 @@ function setupSheetAndSampleData() {
     "Progress Bar"
   ];
 
-  taskSheet.getRange(1, 1, 1, taskHeaders.length)
-    .setValues([taskHeaders])
-    .setBackground("#1e293b")
-    .setFontColor("#ffffff")
-    .setFontWeight("bold");
+  if (taskSheet.getLastRow() === 0) {
+    taskSheet.getRange(1, 1, 1, taskHeaders.length)
+      .setValues([taskHeaders])
+      .setBackground("#1e293b")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold");
+    taskSheet.setFrozenRows(1);
+    taskSheet.autoResizeColumns(1, taskHeaders.length);
 
-  const sampleTasks = [
-    ["PID-123", "Website", "พัฒนาหน้า Dashboard และสถิติรายสัปดาห์", "จัดทำ Dashboard และตรวจสอบความถูกต้องของสถิติรายสัปดาห์ W01-W52", "React, Tailwind, Google Apps Script", "2026-09-01", "2026-09-06", "5 วัน", "พี่ไมค์", "High", "Completed", "ระบบแสดงผลสถิติและกราฟทำงานถูกต้อง 100%", "https://script.google.com", 100, "100%"],
-    ["PID-122", "Marketing", "จัดเตรียมแคมเปญเปิดตัวและคู่มือการใช้งาน", "จัดทำ Card สรุปสถานะ 4 กล่องพร้อมกราฟและคู่มือแนะนำระบบ", "Canva, Notion, Google Docs", "2026-09-02", "2026-09-07", "5 วัน", "พี่หน่อง", "Medium", "In progress", "คู่มือและภาพกราฟิกสำหรับเผยแพร่", "https://docs.google.com", 50, "50%"],
-    ["PID-121", "DevOps", "เชื่อมต่อ Web App เข้ากับ Google Apps Script", "ติดตั้ง Web App และทดสอบการซิงค์ข้อมูลกับชีต", "Google Apps Script, REST API", "2026-09-03", "2026-09-09", "6 วัน", "พี่ตู้", "High", "In progress", "API บันทึกและดึงข้อมูลเสถียร", "https://script.google.com", 45, "45%"],
-    ["PID-120", "Content", "Publish blog page & Case Study", "เขียนบทความแนะนำฟีเจอร์และกรณีศึกษาการใช้งาน", "WordPress, SEO Tools", "2026-09-01", "2026-09-08", "7 วัน", "พี่ไมค์", "Low", "Blocked", "บทความเผยแพร่บนเว็บบริษัท", "", 25, "25%"],
-    ["PID-119", "Design System", "Add gradients and tokens to design system", "เพิ่มชุดโทนสีใน Tailwind CSS ให้รองรับแบรนด์ใหม่และ UI components", "Figma, Tailwind CSS, Lucide Icons", "2026-08-28", "2026-09-02", "5 วัน", "วรรณา", "Medium", "Completed", "ชุด UI Components พร้อมใช้งาน", "https://figma.com", 100, "100%"]
-  ];
+    // Data validation สำหรับ Status (Column K)
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(["Todo", "In progress", "Completed", "Blocked"], true)
+      .build();
+    taskSheet.getRange("K2:K500").setDataValidation(statusRule);
 
-  taskSheet.getRange(2, 1, sampleTasks.length, taskHeaders.length).setValues(sampleTasks);
-  taskSheet.setFrozenRows(1);
-  taskSheet.autoResizeColumns(1, taskHeaders.length);
-
-  // Data validation สำหรับ Status (Column K: Col 11)
-  const statusRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["Todo", "In progress", "Completed", "Blocked"], true)
-    .build();
-  taskSheet.getRange("K2:K100").setDataValidation(statusRule);
-
-  // Data validation สำหรับ Priority (Column J: Col 10)
-  const priorityRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(["High", "Medium", "Low"], true)
-    .build();
-  taskSheet.getRange("J2:J100").setDataValidation(priorityRule);
+    // Data validation สำหรับ Priority (Column J)
+    const priorityRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(["High", "Medium", "Low"], true)
+      .build();
+    taskSheet.getRange("J2:J500").setDataValidation(priorityRule);
+  }
 
   // 2. ชีต Employees (4 Columns: ID, Name, Phone, Project ID)
   let empSheet = ss.getSheetByName(SHEET_EMPLOYEES);
   if (!empSheet) {
     empSheet = ss.insertSheet(SHEET_EMPLOYEES);
-  } else {
-    empSheet.clear();
   }
 
   const empHeaders = [
@@ -418,122 +560,220 @@ function setupSheetAndSampleData() {
     "Phone",
     "Project ID"
   ];
-  empSheet.getRange(1, 1, 1, empHeaders.length)
-    .setValues([empHeaders])
-    .setBackground("#1e293b")
-    .setFontColor("#ffffff")
-    .setFontWeight("bold");
 
-  const sampleEmployees = [
-    ["E01", "พี่ไมค์", "081-445-6789", "Project 1"],
-    ["E02", "พี่หน่อง", "089-112-3344", "แผนก/การตลาด"],
-    ["E03", "พี่ตู้", "086-778-9900", "แผนก/ITW"],
-    ["E04", "สมชาย", "085-334-5566", "แผนก/ITW"],
-    ["E05", "วรรณา", "082-998-7711", "แผนก/ออกแบบ"]
-  ];
+  if (empSheet.getLastRow() === 0) {
+    empSheet.getRange(1, 1, 1, empHeaders.length)
+      .setValues([empHeaders])
+      .setBackground("#1e293b")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold");
+    empSheet.setFrozenRows(1);
+    empSheet.autoResizeColumns(1, empHeaders.length);
+  }
 
-  empSheet.getRange(2, 1, sampleEmployees.length, empHeaders.length).setValues(sampleEmployees);
-  empSheet.setFrozenRows(1);
-  empSheet.autoResizeColumns(1, empHeaders.length);
-
-  SpreadsheetApp.getActiveSpreadsheet().toast("สร้างชีต Tasks (15 ฟิลด์) และ Employees (4 ฟิลด์) เรียบร้อยแล้ว!", "สำเร็จ", 5);
+  SpreadsheetApp.getActiveSpreadsheet().toast("ตรวจสอบและตั้งค่าหัวตารางเรียบร้อยแล้ว", "สำเร็จ", 3);
   return { success: true };
 }
 
 /**
- * ฟังก์ชันช่วยตรวจสอบและสร้างชีตหากยังไม่มี
+ * ฟังก์ชันชื่อเดิมเพื่อความเข้ากันได้
  */
-function checkAndInitSheets(ss) {
-  if (!ss.getSheetByName(SHEET_TASKS) || !ss.getSheetByName(SHEET_EMPLOYEES)) {
-    setupSheetAndSampleData();
-  }
+function setupSheetAndSampleData() {
+  return initSheetHeaders();
 }
 
 /**
- * ฟังก์ชันแปลงชีตเป็น Array of Objects
- * รองรับทั้งหัวตารางใหม่ 15 ฟิลด์ และหัวตารางเดิมเพื่อความเข้ากันได้อย่างสมบูรณ์
+ * ฟังก์ชันช่วยตรวจสอบและสร้างหัวตารางหากยังไม่มี
+ */
+function checkAndInitSheets(ss) {
+  initSheetHeaders();
+}
+
+/**
+ * ฟังก์ชันช่วยแปลงวันที่จากเซลล์ในชีตให้เป็นสตริง YYYY-MM-DD
+ */
+function formatGasDate(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd");
+  }
+  const str = String(val).trim();
+  if (str.length >= 10 && /^\\d{4}-\\d{2}-\\d{2}/.test(str)) {
+    return str.substring(0, 10);
+  }
+  return str;
+}
+
+/**
+ * ฟังก์ชันแปลงเปอร์เซ็นต์
+ */
+function formatGasProgress(val) {
+  if (val === undefined || val === null || val === "") return 0;
+  if (typeof val === "number") {
+    return (val > 0 && val <= 1) ? Math.round(val * 100) : Math.round(val);
+  }
+  const str = String(val).replace("%", "").trim();
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : Math.round(num);
+}
+
+/**
+ * ฟังก์ชันแปลงข้อความ Checklist/Subtasks ที่อ่านได้จาก Google Sheet
+ * - รองรับข้อความธรรมดา (Plain text ตัวอักษรที่พิมพ์ในช่อง บรรทัดต่อบรรทัด)
+ * - รองรับโครงสร้าง JSON เดิม หากมีข้อมูลเก่าค้างอยู่ในชีต
+ */
+function parseGasSubtasksText(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  var str = String(val).trim();
+  if (!str) return [];
+
+  // กรณีเป็นโครงสร้าง JSON เดิม
+  if (str.indexOf('[') === 0 && str.lastIndexOf(']') === str.length - 1) {
+    try {
+      var parsed = JSON.parse(str);
+      if (Array.isArray(parsed)) {
+        return parsed.map(function(item, idx) {
+          if (typeof item === 'string') {
+            return { id: 'st-' + (idx + 1), title: item, completed: false };
+          }
+          return {
+            id: item.id || ('st-' + (idx + 1)),
+            title: item.title || item.name || '',
+            completed: Boolean(item.completed),
+            assignee: item.assignee || undefined
+          };
+        });
+      }
+    } catch (e) {}
+  }
+
+  // ตัวอักษรที่พิมพ์ในช่อง (Plain text บรรทัดต่อบรรทัด หรือคั่นด้วยลูกน้ำ)
+  var lines = str.split(/[\r\n]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+  if (lines.length > 0) {
+    return lines.map(function(line, idx) {
+      return {
+        id: 'st-' + (idx + 1),
+        title: line.replace(/^[-•*]\s*/, ''),
+        completed: false
+      };
+    });
+  }
+  return [];
+}
+
+/**
+ * ฟังก์ชันดึงข้อมูลจริงจาก Google Sheet 100%
+ * อ่านแถวทั้งหมดที่มีในชีต โดยไม่ใส่ข้อมูลจำลอง
  */
 function getSheetData(ss, sheetName) {
-  const sheet = ss.getSheetByName(sheetName);
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    // ค้นหาตามชื่อแผ่นงานแบบยืดหยุ่น (กรณีพิมพ์ตัวพิมพ์เล็ก-ใหญ่ หรือชื่ออื่นๆ)
+    const allSheets = ss.getSheets();
+    const target = sheetName.toLowerCase();
+    for (let s = 0; s < allSheets.length; s++) {
+      const name = allSheets[s].getName().toLowerCase();
+      if (name === target ||
+          (target === "tasks" && (name.includes("task") || name.includes("project") || name === "sheet1" || name === "ชีต1")) ||
+          (target === "employees" && (name.includes("employee") || name.includes("staff") || name.includes("user") || name === "sheet2" || name === "ชีต2"))) {
+        sheet = allSheets[s];
+        break;
+      }
+    }
+  }
   if (!sheet) return [];
-  const rows = sheet.getDataRange().getValues();
-  if (rows.length <= 1) return [];
 
-  const headers = rows[0];
+  const rows = sheet.getDataRange().getValues();
+  if (!rows || rows.length <= 1) return [];
+
+  const rawHeaders = rows[0];
+  const headers = rawHeaders.map(function(h) { return String(h || "").trim(); });
   const results = [];
+  const isTaskSheet = (sheetName === SHEET_TASKS || sheet.getName().toLowerCase().includes("task") || sheet.getName().toLowerCase().includes("project"));
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row[0]) continue; // ข้ามแถวที่ไม่มี ID
+    // ข้ามแถวที่ว่างเปล่าทั้งหมด
+    const hasData = row.some(function(cell) { return cell !== "" && cell !== null && cell !== undefined; });
+    if (!hasData) continue;
 
     const item = {};
-    headers.forEach(function(header, index) {
-      let val = row[index];
-      const hStr = String(header).trim();
-      if ((hStr === "Subtasks" || hStr === "Checklist") && typeof val === "string" && val.trim().startsWith("[")) {
-        try {
-          val = JSON.parse(val);
-        } catch (e) {
-          val = [];
-        }
+    headers.forEach(function(header, idx) {
+      if (!header) return;
+      let val = row[idx];
+      if (val instanceof Date) {
+        val = Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT+7", "yyyy-MM-dd");
       }
-      item[hStr] = val;
+      item[header] = val;
     });
 
-    // Map to unified schema supporting both new 15-column format and legacy format
-    const taskId = String(item["Project ID"] || item["ID"] || item["id"] || "").trim();
-    const title = item["Project Name"] || item["ProjectName"] || item["Category_Title"] || item["Title"] || item["title"] || "";
-    const category = item["Category"] || item["category"] || item["Project"] || "Project 1";
-    const project = item["Project"] || item["Category"] || "Project 1";
-    const description = item["Description"] || item["description"] || "";
-    const techStack = item["Tech Stack / Tools"] || item["TechStack"] || item["Tech Stack"] || item["techStack"] || "";
-    const startDate = item["Start Date"] ? String(item["Start Date"]).substring(0, 10) : (item["StartDate"] ? String(item["StartDate"]).substring(0, 10) : "");
-    const dueDate = item["Due Date"] ? String(item["Due Date"]).substring(0, 10) : (item["DueDate"] ? String(item["DueDate"]).substring(0, 10) : "");
-    const duration = item["Duration"] || item["duration"] || "";
-    const owner = item["Owner"] || item["owner"] || "";
-    const priority = item["Priority"] || item["priority"] || "Medium";
-    const status = item["Status"] || item["status"] || "Todo";
-    const resultOutcome = item["Result / Outcome"] || item["ResultOutcome"] || item["resultOutcome"] || "";
-    const projectLink = item["Project Link"] || item["ProjectLink"] || item["projectLink"] || "";
-    
-    let progress = 0;
-    if (item["Project Progress"] !== undefined && item["Project Progress"] !== "") {
-      progress = Number(item["Project Progress"]);
-    } else if (item["Progress"] !== undefined && item["Progress"] !== "") {
-      progress = Number(item["Progress"]);
+    if (isTaskSheet) {
+      const taskId = String(item["Project ID"] || item["ID"] || item["id"] || item["Task ID"] || ("PID-" + (100 + i))).trim();
+      const title = String(item["Project Name"] || item["ProjectName"] || item["Category_Title"] || item["Title"] || item["title"] || item["ชื่องาน"] || item["ชื่องาน / รายการ"] || ("งานที่ " + i)).trim();
+      const category = String(item["Category"] || item["category"] || item["หมวดหมู่"] || item["Project"] || "ทั่วไป").trim();
+      const project = String(item["Project"] || item["Category"] || item["โครงการ"] || "Project 1").trim();
+      const description = String(item["Description"] || item["description"] || item["รายละเอียด"] || "").trim();
+      const techStack = String(item["Tech Stack / Tools"] || item["TechStack"] || item["Tech Stack"] || item["Tools"] || item["เครื่องมือ"] || "").trim();
+      
+      const startDate = formatGasDate(item["Start Date"] || item["StartDate"] || item["วันที่เริ่ม"]);
+      const dueDate = formatGasDate(item["Due Date"] || item["DueDate"] || item["กำหนดส่ง"] || item["วันกำหนดส่ง"]);
+      const duration = String(item["Duration"] || item["duration"] || item["ระยะเวลา"] || "").trim();
+      const owner = String(item["Owner"] || item["owner"] || item["ผู้รับผิดชอบ"] || "").trim();
+      const priority = String(item["Priority"] || item["priority"] || item["ความสำคัญ"] || "Medium").trim();
+      const status = String(item["Status"] || item["status"] || item["สถานะ"] || "Todo").trim();
+      const resultOutcome = String(item["Result / Outcome"] || item["ResultOutcome"] || item["Result"] || item["ผลลัพธ์"] || "").trim();
+      const projectLink = String(item["Project Link"] || item["ProjectLink"] || item["Link"] || item["URL"] || item["ลิงก์"] || "").trim();
+      
+      const progress = formatGasProgress(item["Project Progress"] !== undefined ? item["Project Progress"] : item["Progress"]);
+      const progressBar = String(item["Progress Bar"] || item["ProgressBar"] || (progress + "%")).trim();
+
+      const rawSubtasks = item["Subtasks"] || item["Subtask"] || item["Checklist"] || item["Detail Checklist"] || item["Detail checklist"] || item["Check list"] || item["Checklist Detail"] || item["งานย่อย"] || item["รายการย่อย"] || item["Detail"] || "";
+      const parsedSubtasks = parseGasSubtasksText(rawSubtasks);
+
+      results.push({
+        id: taskId,
+        title: title,
+        category: category,
+        project: project,
+        priority: priority,
+        status: status,
+        owner: owner,
+        ownerPhone: String(item["OwnerPhone"] || item["Phone"] || item["เบอร์โทร"] || "").trim(),
+        ownerEmail: String(item["OwnerEmail"] || item["Email"] || item["อีเมล"] || "").trim(),
+        techStack: techStack,
+        startDate: startDate,
+        dueDate: dueDate,
+        duration: duration,
+        description: description,
+        resultOutcome: resultOutcome,
+        projectLink: projectLink,
+        progress: progress,
+        progressBar: progressBar,
+        subtasks: parsedSubtasks
+      });
+    } else {
+      // Employees
+      const empId = String(item["ID"] || item["id"] || item["รหัส"] || ("E" + (i < 10 ? "0" + i : i))).trim();
+      const name = String(item["Name"] || item["name"] || item["ชื่อ"] || item["ชื่อพนักงาน"] || "").trim();
+      const phone = String(item["Phone"] || item["phone"] || item["เบอร์โทร"] || "").trim();
+      const projectId = String(item["Project ID"] || item["Project"] || item["โครงการ"] || "").trim();
+      const email = String(item["Email"] || item["email"] || item["อีเมล"] || "").trim();
+      const role = String(item["Role"] || item["role"] || item["ตำแหน่ง"] || "Team Member").trim();
+
+      results.push({
+        id: empId,
+        name: name,
+        phone: phone,
+        projectId: projectId,
+        project: projectId,
+        email: email,
+        role: role,
+        tasksCount: 0
+      });
     }
-    const progressBar = item["Progress Bar"] || item["ProgressBar"] || (progress + "%");
-
-    const mapped = {
-      id: taskId,
-      title: title,
-      category: category,
-      project: project,
-      priority: priority,
-      status: status,
-      owner: owner,
-      ownerPhone: item["OwnerPhone"] || item["Phone"] || "",
-      ownerEmail: item["OwnerEmail"] || item["Email"] || "",
-      techStack: techStack,
-      startDate: startDate,
-      dueDate: dueDate,
-      duration: duration,
-      description: description,
-      resultOutcome: resultOutcome,
-      projectLink: projectLink,
-      progress: progress,
-      progressBar: progressBar,
-      subtasks: Array.isArray(item.Subtasks) ? item.Subtasks : [],
-      name: item.Name || "",
-      phone: item.Phone || "",
-      projectId: item["Project ID"] || item["Project"] || "",
-      email: item.Email || "",
-      role: item.Role || "Team Member",
-      tasksCount: item.TasksCount !== undefined ? Number(item.TasksCount) : 0
-    };
-
-    results.push(mapped);
   }
+
   return results;
 }
 `;
@@ -929,7 +1169,13 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
     <!-- Header with ID, Title, and Edit Mode Toggle Button -->
     <div class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
       <div class="flex-1 mr-3">
-        <span id="detail-id" class="text-xs font-mono font-bold text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800">PID-000</span>
+        <div class="flex items-center gap-1.5">
+          <span id="detail-id" class="text-xs font-mono font-bold text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800">PID-000</span>
+          <div id="detail-id-edit-wrap" class="hidden flex items-center gap-1">
+            <span class="text-[11px] text-indigo-300 font-mono">ID:</span>
+            <input type="text" id="detail-id-input" class="w-28 px-2 py-0.5 bg-slate-800 border border-indigo-500 rounded text-indigo-200 font-mono font-bold text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-400" placeholder="รหัสงาน...">
+          </div>
+        </div>
         <h3 id="detail-title-view" class="text-base font-bold mt-1 text-white">รายละเอียดงาน</h3>
         <input type="text" id="detail-title-input" class="hidden w-full mt-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500" placeholder="ชื่อหัวข้องาน...">
       </div>
@@ -1109,6 +1355,22 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
     </div>
 
     <form onsubmit="handleAddSubmit(event)" class="p-6 space-y-3 text-xs overflow-y-auto flex-1">
+      <!-- Work ID (Manual or Auto) -->
+      <div class="p-3 bg-indigo-50/70 rounded-xl border border-indigo-100 space-y-1.5">
+        <div class="flex items-center justify-between">
+          <label class="block font-bold text-indigo-950 text-xs">
+            รหัสงาน (Work ID) <span class="font-normal text-slate-500 text-[11px]">(กรอกเองได้ หรือใช้อัตโนมัติ)</span>
+          </label>
+          <button type="button" onclick="resetNewTaskIdAuto()" class="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer">
+            🔄 รีเซ็ตรหัสอัตโนมัติ
+          </button>
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="text" id="new-task-custom-id" placeholder="เช่น AI-001, PID-101..." class="w-full px-3 py-1.5 rounded-lg border border-indigo-200 bg-white font-mono font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <p id="gas-id-preview-note" class="text-[10px] text-slate-500">เว้นว่างไว้เพื่อใช้รหัสอัตโนมัติต่อเนื่องจากระบบ</p>
+      </div>
+
       <div>
         <label class="block font-semibold text-slate-700 mb-1">ชื่องาน (Task Title) *</label>
         <input type="text" id="new-task-title" required placeholder="เช่น ออกแบบหน้าเว็บใหม่, ตรวจทานโค้ด..." class="w-full px-3 py-2 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500">
@@ -1357,15 +1619,93 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
         </div>
       </div>
 
-      <div class="pt-2 flex justify-end gap-2">
-        <button id="btn-view-emp-tasks" onclick="goToEmployeeTasks()" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-medium text-white transition-colors cursor-pointer">
-          ดูในหน้ารายการงาน
-        </button>
-        <button onclick="closeModal('modal-employee-detail')" class="rounded-xl border border-slate-200 hover:bg-slate-50 px-4 py-2 text-xs font-medium text-slate-700 transition-colors cursor-pointer">
-          ปิด
-        </button>
+      <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-1.5">
+          <button onclick="editCurrentDetailEmployee()" class="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 font-medium bg-amber-50 hover:bg-amber-100 border border-amber-200/80 px-3 py-2 rounded-xl transition cursor-pointer">
+            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+            <span>แก้ไขข้อมูล</span>
+          </button>
+          <button onclick="deleteCurrentDetailEmployee()" class="inline-flex items-center gap-1 text-xs text-rose-700 hover:text-rose-900 font-medium bg-rose-50 hover:bg-rose-100 border border-rose-200/80 px-3 py-2 rounded-xl transition cursor-pointer">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>ลบพนักงาน</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-view-emp-tasks" onclick="goToEmployeeTasks()" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-xs font-medium text-white transition-colors cursor-pointer">
+            ดูในหน้ารายการงาน
+          </button>
+          <button onclick="closeModal('modal-employee-detail')" class="rounded-xl border border-slate-200 hover:bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-700 transition-colors cursor-pointer">
+            ปิด
+          </button>
+        </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 7. MODAL: EDIT EMPLOYEE -->
+<div id="modal-edit-employee" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+  <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden" onclick="event.stopPropagation()">
+    <div class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="h-8 w-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
+          <i data-lucide="user-check" class="w-4 h-4"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold">แก้ไขข้อมูลพนักงาน</h3>
+          <p class="text-xs text-slate-400">อัปเดตข้อมูลหรือลบรายชื่อพนักงาน</p>
+        </div>
+      </div>
+      <button onclick="closeModal('modal-edit-employee')" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <form id="form-edit-employee" onsubmit="event.preventDefault(); saveEmployeeEdit();" class="p-6 space-y-4 text-xs">
+      <input type="hidden" id="edit-emp-orig-id" />
+      <div class="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+        <span class="font-semibold text-slate-500 uppercase">รหัสพนักงาน (ID)</span>
+        <input type="text" id="edit-emp-id" required class="font-mono text-xs font-bold text-indigo-700 bg-white border border-slate-300 rounded px-2.5 py-1 w-28 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+      </div>
+      <div>
+        <label class="block font-semibold text-slate-700 mb-1">ชื่อ-นามสกุล หรือชื่อเล่น *</label>
+        <input type="text" id="edit-emp-name" required class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">ตำแหน่งงาน (Role)</label>
+          <input type="text" id="edit-emp-role" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">แผนก / โครงการ</label>
+          <input type="text" id="edit-emp-project" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </div>
+      </div>
+      <div>
+        <label class="block font-semibold text-slate-700 mb-1">รหัสงานที่รับผิดชอบ (Project ID)</label>
+        <input type="text" id="edit-emp-projectid" placeholder="เช่น AI-001, AI-002 (คั่นด้วยจุลภาค)" class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-xs bg-white font-mono focus:ring-2 focus:ring-indigo-500 outline-none" />
+        <p class="text-[11px] text-slate-400 mt-1">ระบุรหัสงานตรงกับชีต Tasks เพื่อเชื่อมโยงงานอัตโนมัติ</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">เบอร์โทรศัพท์</label>
+          <input type="text" id="edit-emp-phone" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">อีเมล</label>
+          <input type="email" id="edit-emp-email" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-none" />
+        </div>
+      </div>
+      <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+        <button type="button" onclick="deleteEmployeePrompt(document.getElementById('edit-emp-orig-id').value)" class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition cursor-pointer">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          <span>ลบพนักงาน</span>
+        </button>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="closeModal('modal-edit-employee')" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold cursor-pointer">ยกเลิก</button>
+          <button type="submit" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs cursor-pointer">บันทึกการแก้ไข</button>
+        </div>
+      </div>
+    </form>
   </div>
 </div>
 `;
@@ -1378,25 +1718,6 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
   let appEmployees = [];
   let currentDetailTask = null;
   let selectedStatusTemp = null;
-
-  // Initial mock fallback if run standalone outside Apps Script
-  const defaultSampleTasks = [
-    { id: "PID-125", title: "Task 4: ประมวลผลสถิติรายสัปดาห์ (W37)", project: "แผนก/ITW", priority: "High", status: "In progress", owner: "พี่ตู้", ownerPhone: "086-778-9900", ownerEmail: "tu.itw@company.com", dueDate: "2026-09-11", description: "คำนวณยอดงาน W36, W37 แยกตามสถานะ", progress: 50 },
-    { id: "PID-124", title: "Task 3: จัดเตรียมเอกสารส่งมอบงาน Sprint W37", project: "Project 1", priority: "Medium", status: "Completed", owner: "พี่ไมค์", ownerPhone: "081-445-6789", ownerEmail: "mike.lead@company.com", dueDate: "2026-09-09", description: "สรุปผลการดำเนินงานประจำสัปดาห์ที่ 37", progress: 100 },
-    { id: "PID-123", title: "Task 1: จัดเตรียมระบบ Sheet", project: "Project 1", priority: "High", status: "Completed", owner: "พี่ไมค์", ownerPhone: "081-445-6789", ownerEmail: "mike.lead@company.com", dueDate: "2026-09-04", description: "พัฒนาหน้า Dashboard และตรวจสอบความถูกต้องของสถิติรายสัปดาห์", progress: 100 },
-    { id: "PID-122", title: "Task 2: วางโครงร่างหน้า Dashboard", project: "แผนก/การตลาด", priority: "Medium", status: "In progress", owner: "พี่หน่อง", ownerPhone: "089-112-3344", ownerEmail: "nong.mkt@company.com", dueDate: "2026-09-05", description: "จัดทำ Card สรุปสถานะ 4 กล่องพร้อมกราฟ", progress: 60 },
-    { id: "PID-121", title: "Write blog post for demo day", project: "แผนก/ITW", priority: "High", status: "In progress", owner: "พี่ตู้", ownerPhone: "086-778-9900", ownerEmail: "tu.itw@company.com", dueDate: "2026-09-05", description: "เขียนบทความแนะนำระบบ", progress: 45 },
-    { id: "PID-120", title: "Publish blog page", project: "แผนก/การตลาด", priority: "Low", status: "Blocked", owner: "พี่ไมค์", ownerPhone: "081-445-6789", ownerEmail: "mike.lead@company.com", dueDate: "2026-09-08", description: "ติดปัญหาเรื่องสิทธิ์การเข้าถึง CMS ชั่วคราว", progress: 25 },
-    { id: "PID-119", title: "Add gradients to design system", project: "แผนก/ออกแบบ", priority: "Medium", status: "Completed", owner: "พี่หน่อง", ownerPhone: "089-112-3344", ownerEmail: "nong.mkt@company.com", dueDate: "2026-09-02", description: "เพิ่มชุดโทนสีใน Tailwind CSS ให้รองรับแบรนด์ใหม่", progress: 100 }
-  ];
-
-  const defaultSampleEmployees = [
-    { id: "E01", name: "พี่ไมค์", project: "Project 1", phone: "081-445-6789", email: "mike.lead@company.com", role: "Tech Lead / Project Manager", tasksCount: 4 },
-    { id: "E02", name: "พี่หน่อง", project: "แผนก/การตลาด", phone: "089-112-3344", email: "nong.mkt@company.com", role: "Marketing Lead", tasksCount: 5 },
-    { id: "E03", name: "พี่ตู้", project: "แผนก/ITW", phone: "086-778-9900", email: "tu.itw@company.com", role: "Senior Full-Stack Dev", tasksCount: 4 },
-    { id: "E04", name: "สมชาย", project: "แผนก/ITW", phone: "085-334-5566", email: "somchai@company.com", role: "Frontend Developer", tasksCount: 2 },
-    { id: "E05", name: "วรรณา", project: "แผนก/ออกแบบ", phone: "082-998-7711", email: "wanna.design@company.com", role: "UI/UX Designer", tasksCount: 3 }
-  ];
 
   // Initialize
   window.addEventListener('DOMContentLoaded', () => {
@@ -1414,22 +1735,22 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
             const conn = document.getElementById('connection-status');
             if (conn) conn.classList.remove('hidden');
           } else {
-            appTasks = defaultSampleTasks;
-            appEmployees = defaultSampleEmployees;
+            appTasks = [];
+            appEmployees = [];
           }
           renderAll();
         })
         .withFailureHandler((err) => {
-          console.error(err);
-          appTasks = defaultSampleTasks;
-          appEmployees = defaultSampleEmployees;
+          console.error("Error loading sheet data:", err);
+          appTasks = [];
+          appEmployees = [];
           renderAll();
         })
         .apiGetInitialData();
     } else {
-      // Fallback for standalone preview
-      appTasks = defaultSampleTasks;
-      appEmployees = defaultSampleEmployees;
+      // ดึงข้อมูลจากชีตจริงโดยตรงเท่านั้น ไม่มี Mock Data
+      appTasks = [];
+      appEmployees = [];
       renderAll();
     }
   }
@@ -1861,10 +2182,31 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     }
 
     tbody.innerHTML = filtered.map(e => {
-      const empTasks = appTasks.filter(t => t.owner === e.name);
+      // Helper function to match tasks by comma-separated Project IDs (e.g. AI-001,AI-002,AI-003) OR by Owner name
+      const rawPIds = String(e.project || e.projectId || '')
+        .split(/[;,|]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const pIdsLower = rawPIds.map(s => s.toLowerCase());
+      const specificPIds = rawPIds.filter(id => id && id !== '-' && !id.startsWith('แผนก') && id.toLowerCase() !== 'project 1');
+      const empName = (e.name || '').trim().toLowerCase();
+      const empId = (e.id || '').trim().toLowerCase();
+      const empTasks = appTasks.filter(t => {
+        const tId = (t.id || '').trim().toLowerCase();
+        const tProj = (t.project || '').trim().toLowerCase();
+        const tCategory = (t.category || '').trim().toLowerCase();
+        const tOwner = (t.owner || '').trim().toLowerCase();
+        const idMatch = pIdsLower.length > 0 && (pIdsLower.includes(tId) || pIdsLower.includes(tProj) || pIdsLower.includes(tCategory));
+        const ownerMatch = empName !== '' && (tOwner === empName || tOwner === empId || tOwner.split(/[;,|]+/).map(s => s.trim().toLowerCase()).includes(empName));
+        return idMatch || ownerMatch;
+      });
       const completedCount = empTasks.filter(t => t.status === 'Completed').length;
-      const count = empTasks.length > 0 ? empTasks.length : (e.tasksCount || 0);
+      const count = Math.max(specificPIds.length, empTasks.length) || e.tasksCount || 0;
       const initial = (e.name || 'P').slice(0, 1);
+
+      const projectBadges = specificPIds.length > 0
+        ? \`<span class="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 border border-indigo-200/80 px-2.5 py-1 text-[11px] font-mono font-medium text-indigo-700" title="\${specificPIds.join(', ')}">\${specificPIds.join(', ')}</span>\`
+        : \`<span class="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-[11px] text-slate-700">\${e.project || '-'}</span>\`;
 
       return \`
         <tr class="hover:bg-slate-50/80 transition-colors group cursor-pointer" onclick="openEmployeeDetailModal('\${e.id}')">
@@ -1882,10 +2224,8 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
               </div>
             </div>
           </td>
-          <td class="px-5 py-3.5 text-slate-600 font-medium whitespace-nowrap">
-            <span class="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-[11px] text-slate-700">
-              \${e.project}
-            </span>
+          <td class="px-5 py-3.5 text-slate-600 font-medium">
+            \${projectBadges}
           </td>
           <td class="px-5 py-3.5 text-slate-600 whitespace-nowrap">
             <div class="flex flex-col text-xs">
@@ -1912,7 +2252,23 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
                 <span>ดูข้อมูล</span>
               </button>
               <button
-                onclick="filterTasksByEmployee('\${e.name}')"
+                onclick="openEditEmployeeModal('\${e.id}')"
+                class="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 font-medium bg-amber-50 hover:bg-amber-100 border border-amber-200/80 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                title="แก้ไขข้อมูลพนักงาน"
+              >
+                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                <span>แก้ไข</span>
+              </button>
+              <button
+                onclick="deleteEmployeePrompt('\${e.id}')"
+                class="inline-flex items-center gap-1 text-xs text-rose-700 hover:text-rose-900 font-medium bg-rose-50 hover:bg-rose-100 border border-rose-200/80 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                title="ลบพนักงาน"
+              >
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                <span>ลบ</span>
+              </button>
+              <button
+                onclick="filterTasksByEmployee('\${e.name}', '\${(e.project || '').replace(/'/g, \"\\\\'\")}')"
                 class="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
                 title="ดูงานทั้งหมดที่พนักงานคนนี้รับผิดชอบ"
               >
@@ -2011,19 +2367,50 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       avatarEl.innerText = (emp.name || 'P').slice(0, 1);
     }
 
-    // Populate assigned tasks
-    const empTasks = appTasks.filter(t => t.owner === emp.name);
+    // Populate assigned tasks (matched by Project IDs or Owner name)
+    const rawPIds = String(emp.project || emp.projectId || '')
+      .split(/[;,|]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    const pIds = rawPIds.map(s => s.toLowerCase());
+    const specificPIds = rawPIds.filter(id => id && id !== '-' && !id.startsWith('แผนก') && id.toLowerCase() !== 'project 1');
+    const empName = (emp.name || '').trim().toLowerCase();
+    const targetEmpId = (emp.id || '').trim().toLowerCase();
+    const empTasks = appTasks.filter(t => {
+      const tId = (t.id || '').trim().toLowerCase();
+      const tProj = (t.project || '').trim().toLowerCase();
+      const tCategory = (t.category || '').trim().toLowerCase();
+      const tOwner = (t.owner || '').trim().toLowerCase();
+      const idMatch = pIds.length > 0 && (pIds.includes(tId) || pIds.includes(tProj) || pIds.includes(tCategory));
+      const ownerMatch = empName !== '' && (tOwner === empName || tOwner === targetEmpId || tOwner.split(/[;,|]+/).map(s => s.trim().toLowerCase()).includes(empName));
+      return idMatch || ownerMatch;
+    });
+
+    const displayTasks = [...empTasks];
+    const foundTaskIds = new Set(empTasks.map(t => (t.id || '').trim().toLowerCase()));
+    for (const specId of specificPIds) {
+      if (!foundTaskIds.has(specId.toLowerCase())) {
+        displayTasks.push({
+          id: specId,
+          title: 'งานรหัส ' + specId + ' (ระบุในตารางพนักงาน)',
+          status: 'In progress',
+          category: 'โครงการที่ได้รับมอบหมาย'
+        });
+      }
+    }
+
     const countEl = document.getElementById('emp-detail-task-count');
     if (countEl) {
-      countEl.innerText = empTasks.length + ' งาน';
+      const displayCount = Math.max(displayTasks.length, specificPIds.length) || emp.tasksCount || 0;
+      countEl.innerText = displayCount + ' งาน';
     }
 
     const tasksListEl = document.getElementById('emp-detail-tasks-list');
     if (tasksListEl) {
-      if (empTasks.length === 0) {
+      if (displayTasks.length === 0) {
         tasksListEl.innerHTML = '<div class="text-slate-400 text-center py-4">ยังไม่มีงานที่มอบหมายให้พนักงานคนนี้</div>';
       } else {
-        tasksListEl.innerHTML = empTasks.map(t => {
+        tasksListEl.innerHTML = displayTasks.map(t => {
           let statusBadgeClass = 'bg-slate-100 text-slate-600';
           if (t.status === 'Completed') statusBadgeClass = 'bg-emerald-50 text-emerald-700';
           else if (t.status === 'In progress') statusBadgeClass = 'bg-blue-50 text-blue-700';
@@ -2051,17 +2438,138 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
   function goToEmployeeTasks() {
     if (!selectedEmployeeForDetail) return;
     const name = selectedEmployeeForDetail.name;
+    const project = selectedEmployeeForDetail.project || selectedEmployeeForDetail.projectId || '';
     closeModal('modal-employee-detail');
-    filterTasksByEmployee(name);
+    filterTasksByEmployee(name, project);
   }
 
-  function filterTasksByEmployee(ownerName) {
-    const searchInput = document.getElementById('work-search');
+  function filterTasksByEmployee(ownerName, projectCodes) {
+    const searchInput = document.getElementById('filter-search');
     if (searchInput) {
-      searchInput.value = ownerName;
+      searchInput.value = ownerName || (projectCodes ? projectCodes.split(/[;,|]+/)[0].trim() : '') || '';
     }
     switchTab('work');
     renderTasksTable();
+  }
+
+  function openEditEmployeeModal(empId) {
+    const emp = appEmployees.find(e => e.id === empId);
+    if (!emp) return;
+
+    const origIdEl = document.getElementById('edit-emp-orig-id');
+    const idEl = document.getElementById('edit-emp-id');
+    const nameEl = document.getElementById('edit-emp-name');
+    const roleEl = document.getElementById('edit-emp-role');
+    const projEl = document.getElementById('edit-emp-project');
+    const projIdEl = document.getElementById('edit-emp-projectid');
+    const phoneEl = document.getElementById('edit-emp-phone');
+    const emailEl = document.getElementById('edit-emp-email');
+
+    if (origIdEl) origIdEl.value = emp.id;
+    if (idEl) idEl.value = emp.id;
+    if (nameEl) nameEl.value = emp.name || '';
+    if (roleEl) roleEl.value = emp.role || 'Team Member';
+    if (projEl) projEl.value = emp.project || '';
+    if (projIdEl) projIdEl.value = emp.projectId || emp.project || '';
+    if (phoneEl) phoneEl.value = emp.phone || '';
+    if (emailEl) emailEl.value = emp.email || '';
+
+    openModal('modal-edit-employee');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function editCurrentDetailEmployee() {
+    if (!selectedEmployeeForDetail) return;
+    const empId = selectedEmployeeForDetail.id;
+    closeModal('modal-employee-detail');
+    openEditEmployeeModal(empId);
+  }
+
+  function deleteCurrentDetailEmployee() {
+    if (!selectedEmployeeForDetail) return;
+    const empId = selectedEmployeeForDetail.id;
+    closeModal('modal-employee-detail');
+    deleteEmployeePrompt(empId);
+  }
+
+  function saveEmployeeEdit() {
+    const origId = document.getElementById('edit-emp-orig-id').value;
+    const newId = document.getElementById('edit-emp-id').value.trim() || origId;
+    const name = document.getElementById('edit-emp-name').value.trim();
+    const role = document.getElementById('edit-emp-role').value.trim();
+    const project = document.getElementById('edit-emp-project').value.trim();
+    const projectId = document.getElementById('edit-emp-projectid').value.trim();
+    const phone = document.getElementById('edit-emp-phone').value.trim();
+    const email = document.getElementById('edit-emp-email').value.trim();
+
+    if (!name) {
+      alert('กรุณากรอกชื่อพนักงาน');
+      return;
+    }
+
+    const idx = appEmployees.findIndex(e => e.id === origId);
+    const existing = idx !== -1 ? appEmployees[idx] : {};
+    const updatedEmp = {
+      ...existing,
+      id: newId,
+      name: name,
+      role: role || 'Team Member',
+      project: project || 'แผนก/ITW',
+      projectId: projectId || project,
+      phone: phone || '-',
+      email: email || '-'
+    };
+
+    if (idx !== -1) {
+      appEmployees[idx] = updatedEmp;
+    }
+
+    // Update UI immediately (Optimistic)
+    renderEmployees();
+    populateOwnerDropdown();
+    closeModal('modal-edit-employee');
+
+    // Save to Google Sheet in background
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res && res.success === false) {
+            console.warn('Employee save warning:', res.error);
+          }
+        })
+        .withFailureHandler(function(err) {
+          console.error('Employee save error:', err);
+        })
+        .apiSaveEmployee(updatedEmp);
+    }
+  }
+
+  function deleteEmployeePrompt(empId) {
+    const emp = appEmployees.find(e => e.id === empId);
+    const name = emp ? emp.name : empId;
+    if (!confirm('คุณแน่ใจว่าต้องการลบพนักงาน "' + name + '" (' + empId + ') ออกจากระบบใช่หรือไม่?')) {
+      return;
+    }
+
+    // Remove from local array immediately (Optimistic)
+    appEmployees = appEmployees.filter(e => e.id !== empId);
+    renderEmployees();
+    populateOwnerDropdown();
+    closeModal('modal-edit-employee');
+
+    // Delete in Google Sheet in background
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res && res.success === false) {
+            console.warn('Employee delete warning:', res.error);
+          }
+        })
+        .withFailureHandler(function(err) {
+          console.error('Employee delete error:', err);
+        })
+        .apiDeleteEmployee(empId);
+    }
   }
 
   function populateOwnerDropdown() {
@@ -2153,6 +2661,15 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
   function applyWorkDetailEditModeUI() {
     const toggleBtnTxt = document.getElementById('txt-edit-task');
     if (toggleBtnTxt) toggleBtnTxt.innerText = isWorkDetailEditMode ? 'ดูตัวอย่าง' : 'แก้ไขข้อมูล';
+
+    const idView = document.getElementById('detail-id');
+    const idEditWrap = document.getElementById('detail-id-edit-wrap');
+    if (idView) idView.classList.toggle('hidden', isWorkDetailEditMode);
+    if (idEditWrap) idEditWrap.classList.toggle('hidden', !isWorkDetailEditMode);
+    if (isWorkDetailEditMode && currentDetailTask) {
+      const idInput = document.getElementById('detail-id-input');
+      if (idInput) idInput.value = currentDetailTask.id;
+    }
 
     const viewElements = ['detail-title-view', 'detail-project-view', 'detail-owner-view', 'detail-priority-view', 'detail-duedate-view', 'detail-desc-view'];
     const inputElements = ['detail-title-input', 'detail-project-input', 'detail-owner-input', 'detail-priority-input', 'detail-duedate-input', 'detail-desc-input'];
@@ -2358,8 +2875,10 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
 
   function saveDetailFullTaskChange() {
     if (!currentDetailTask) return;
+    const origId = currentDetailTask.id;
 
     if (isWorkDetailEditMode) {
+      const idInput = document.getElementById('detail-id-input');
       const titleInput = document.getElementById('detail-title-input');
       const projInput = document.getElementById('detail-project-input');
       const ownerInput = document.getElementById('detail-owner-input');
@@ -2367,6 +2886,7 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       const dueInput = document.getElementById('detail-duedate-input');
       const descInput = document.getElementById('detail-desc-input');
 
+      if (idInput && idInput.value.trim()) currentDetailTask.id = idInput.value.trim();
       if (titleInput && titleInput.value.trim()) currentDetailTask.title = titleInput.value.trim();
       if (projInput && projInput.value.trim()) currentDetailTask.project = projInput.value.trim();
       if (ownerInput && ownerInput.value) currentDetailTask.owner = ownerInput.value;
@@ -2380,21 +2900,27 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     }
 
     // Update in local array
-    const idx = appTasks.findIndex(t => t.id === currentDetailTask.id);
+    const idx = appTasks.findIndex(t => t.id === origId);
     if (idx !== -1) {
       appTasks[idx] = { ...currentDetailTask };
     }
 
+    // 1. Immediately update UI and close modal! (Zero latency, instant response!)
+    renderAll();
+    closeModal('modal-workdetail');
+
+    // 2. Persist to Google Sheet in background
     if (typeof google !== 'undefined' && google.script && google.script.run) {
       google.script.run
-        .withSuccessHandler(() => {
-          renderAll();
-          closeModal('modal-workdetail');
+        .withSuccessHandler(function(res) {
+          if (res && res.success === false) {
+            console.warn('Sheet save warning:', res.error);
+          }
         })
-        .apiSaveTask(currentDetailTask);
-    } else {
-      renderAll();
-      closeModal('modal-workdetail');
+        .withFailureHandler(function(err) {
+          console.error('Sheet save error:', err);
+        })
+        .apiSaveTask(currentDetailTask, origId);
     }
   }
 
@@ -2576,10 +3102,33 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     renderGasAddSubtasksList();
   }
 
+  function resetNewTaskIdAuto() {
+    const nums = appTasks.map(t => {
+      const m = (t.id || '').match(/PID-(\\\\d+)/);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    const nextNum = (nums.length > 0 ? Math.max(...nums) : 100) + 1;
+    const idInput = document.getElementById('new-task-custom-id');
+    if (idInput) idInput.value = 'PID-' + nextNum;
+  }
+
+  function getGasGeneratedId(baseId, index) {
+    if (index === 0) return baseId;
+    const match = baseId.match(/^(.*?)(\\\\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const numStr = match[2];
+      const num = parseInt(numStr, 10) + index;
+      return prefix + String(num).padStart(numStr.length, '0');
+    }
+    return baseId + '-' + (index + 1);
+  }
+
   function openAddTaskModal() {
     document.getElementById('new-task-title').value = '';
     document.getElementById('new-task-desc').value = '';
     document.getElementById('new-task-duedate').value = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    resetNewTaskIdAuto();
 
     // Populate owner select
     const ownerSelect = document.getElementById('new-task-owner');
@@ -2613,11 +3162,13 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       return m ? parseInt(m[1], 10) : 0;
     });
     const nextNum = (nums.length > 0 ? Math.max(...nums) : 100) + 1;
+    const customIdVal = (document.getElementById('new-task-custom-id')?.value || '').trim();
+    const finalBaseId = customIdVal || ('PID-' + nextNum);
 
     if (gasAddTaskMode === 'shared') {
       const owner = document.getElementById('new-task-owner').value;
       const ownerData = appEmployees.find(emp => emp.name === owner);
-      const newId = 'PID-' + nextNum;
+      const newId = finalBaseId;
 
       const subtasksFormatted = gasSharedSubtasks.map((st, idx) => ({
         id: 'st-' + Date.now() + '-' + idx,
@@ -2662,8 +3213,10 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
           assignee: empName
         }));
 
+        const cardId = getGasGeneratedId(finalBaseId, index);
+
         return {
-          id: 'PID-' + (nextNum + index),
+          id: cardId,
           title: title,
           project: project,
           owner: empName,

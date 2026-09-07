@@ -75,8 +75,10 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
     }
   };
 
-  // Mode 1: Shared Task State
-  const [owner, setOwner] = useState(employees[0]?.name || 'พี่ไมค์');
+  // Mode 1: Shared Task State - Support multiple lead owners
+  const [selectedOwners, setSelectedOwners] = useState<string[]>(() =>
+    employees[0]?.name ? [employees[0].name] : ['พี่ไมค์']
+  );
   const [sharedSubtasks, setSharedSubtasks] = useState<
     Array<{ id: string; title: string; assignee?: string }>
   >([
@@ -85,6 +87,22 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
   ]);
   const [newSharedSubtaskTitle, setNewSharedSubtaskTitle] = useState('');
   const [newSharedSubtaskAssignee, setNewSharedSubtaskAssignee] = useState(employees[0]?.name || '');
+
+  const handleToggleOwner = (empName: string) => {
+    setSelectedOwners((prev) =>
+      prev.includes(empName)
+        ? (prev.length > 1 ? prev.filter((n) => n !== empName) : prev)
+        : [...prev, empName]
+    );
+  };
+
+  const handleSelectAllOwners = () => {
+    if (selectedOwners.length === employees.length) {
+      setSelectedOwners(employees[0]?.name ? [employees[0].name] : []);
+    } else {
+      setSelectedOwners(employees.map((e) => e.name));
+    }
+  };
 
   // Mode 2: Template Batch Assign State
   const [selectedEmployeeNames, setSelectedEmployeeNames] = useState<string[]>(
@@ -107,6 +125,33 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
       .filter((n) => !isNaN(n));
     return nums.length > 0 ? Math.max(...nums) + 1 : 101;
   }, [existingTasks]);
+
+  // Custom Work ID
+  const [customTaskId, setCustomTaskId] = useState('');
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setCustomTaskId((prev) => (prev.trim() ? prev : `PID-${nextBaseId}`));
+    }
+  }, [isOpen, nextBaseId]);
+
+  const getGeneratedIdForIndex = (baseId: string, index: number): string => {
+    const trimmed = baseId.trim();
+    if (index === 0) return trimmed;
+    const match = trimmed.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const numStr = match[2];
+      const num = parseInt(numStr, 10) + index;
+      return `${prefix}${String(num).padStart(numStr.length, '0')}`;
+    }
+    return `${trimmed}-${index + 1}`;
+  };
+
+  const finalSingleId = customTaskId.trim() || `PID-${nextBaseId}`;
+  const isDuplicateId = existingTasks.some(
+    (t) => t.id.toLowerCase() === finalSingleId.toLowerCase()
+  );
 
   if (!isOpen) return null;
 
@@ -165,8 +210,14 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
     const today = new Date().toISOString().split('T')[0];
 
     if (mode === 'shared') {
-      // Create 1 Shared Task
-      const ownerData = employees.find((e) => e.name === owner);
+      // Create 1 Shared Task with multi-owner support
+      const finalOwner =
+        selectedOwners.length > 0 ? selectedOwners.join(', ') : employees[0]?.name || 'พี่ไมค์';
+      const selectedOwnerObjs = employees.filter((e) => selectedOwners.includes(e.name));
+      const ownerPhones = selectedOwnerObjs.map((e) => e.phone).filter(Boolean).join(', ');
+      const ownerEmails = selectedOwnerObjs.map((e) => e.email).filter(Boolean).join(', ');
+      const ownerAvatar = selectedOwnerObjs[0]?.avatar;
+
       const subtasksFormatted: Subtask[] = sharedSubtasks.map((s, idx) => ({
         id: `st-${Date.now()}-${idx}`,
         title: s.title,
@@ -174,18 +225,19 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
         assignee: s.assignee || undefined,
       }));
 
+      const finalId = customTaskId.trim() || `PID-${nextBaseId}`;
       const newTask: Task = {
-        id: `PID-${nextBaseId}`,
+        id: finalId,
         title: title.trim(),
         project,
         category: category.trim() || project,
         techStack: techStack.trim(),
         priority,
         status,
-        owner,
-        ownerPhone: ownerData?.phone || '',
-        ownerEmail: ownerData?.email || '',
-        ownerAvatar: ownerData?.avatar,
+        owner: finalOwner,
+        ownerPhone: ownerPhones,
+        ownerEmail: ownerEmails,
+        ownerAvatar: ownerAvatar,
         startDate: startDate || today,
         dueDate: baseDueDate,
         duration: duration.trim() || '7 วัน',
@@ -215,8 +267,10 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
           assignee: empName, // Default to this employee
         }));
 
+        const cardId = getGeneratedIdForIndex(customTaskId.trim() || `PID-${nextBaseId}`, index);
+
         return {
-          id: `PID-${nextBaseId + index}`,
+          id: cardId,
           title: title.trim(),
           project,
           category: category.trim() || project,
@@ -318,16 +372,59 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
-          {/* PID Preview */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase">
-              {mode === 'shared' ? 'รหัสงานที่จะสร้าง' : 'รหัสงานเริ่มต้น (Sequential IDs)'}
-            </span>
-            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200">
-              {mode === 'shared'
-                ? `PID-${nextBaseId}`
-                : `PID-${nextBaseId} ถึง PID-${nextBaseId + Math.max(0, selectedEmployeeNames.length - 1)}`}
-            </span>
+          {/* Work ID (กรอกเองได้ หรือใช้อัตโนมัติ) */}
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <label htmlFor="custom-task-id-input" className="block text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                <span>รหัสงาน (Work ID)</span>
+                <span className="font-normal text-[11px] text-slate-500">*กรอกเองได้ตามต้องการ</span>
+              </label>
+              <button
+                type="button"
+                id="reset-task-id-btn"
+                onClick={() => setCustomTaskId(`PID-${nextBaseId}`)}
+                className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                title="รีเซ็ตเป็นรหัสอัตโนมัติของระบบ"
+              >
+                🔄 รีเซ็ตเป็นรหัสอัตโนมัติ (PID-{nextBaseId})
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  id="custom-task-id-input"
+                  type="text"
+                  value={customTaskId}
+                  onChange={(e) => setCustomTaskId(e.target.value)}
+                  placeholder={`เช่น AI-001, PID-${nextBaseId}, TASK-01...`}
+                  className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 font-mono text-xs font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <span className="shrink-0 text-xs font-mono font-medium px-2.5 py-2 rounded-xl bg-indigo-100/70 text-indigo-800 border border-indigo-200">
+                {mode === 'shared' ? '1 การ์ด' : `${selectedEmployeeNames.length} การ์ด`}
+              </span>
+            </div>
+
+            {/* In template mode, show sequence preview */}
+            {mode === 'template' && selectedEmployeeNames.length > 0 && (
+              <div className="text-[11px] text-slate-600 bg-white/90 p-2 rounded-lg border border-indigo-100/80">
+                <span className="font-semibold text-indigo-900">ตัวอย่างรหัสงานที่จะสร้างตามคน: </span>
+                <span className="font-mono text-indigo-700">
+                  {selectedEmployeeNames
+                    .slice(0, 3)
+                    .map((emp, i) => `${getGeneratedIdForIndex(customTaskId || `PID-${nextBaseId}`, i)} (${emp})`)
+                    .join(', ')}
+                  {selectedEmployeeNames.length > 3 ? ` ... รวม ${selectedEmployeeNames.length} รายการ` : ''}
+                </span>
+              </div>
+            )}
+
+            {isDuplicateId && (
+              <p className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
+                ⚠️ มีรหัสงานนี้ในระบบแล้ว (สามารถใช้ซ้ำได้หากต้องการเชื่อมโยงในกลุ่มงานเดียวกัน)
+              </p>
+            )}
           </div>
 
           {/* Title and Category */}
@@ -398,49 +495,107 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
           </div>
 
           {/* Lead Owner / Card count */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {mode === 'shared' ? (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ผู้รับผิดชอบหลัก (Lead Owner)
+          {mode === 'shared' ? (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-800">
+                  ผู้รับผิดชอบหลัก (Lead Owners)
+                  <span className="ml-1.5 text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-full">
+                    เลือกแล้ว {selectedOwners.length} คน
+                  </span>
                 </label>
-                <select
-                  value={owner}
-                  onChange={(e) => setOwner(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                <button
+                  type="button"
+                  onClick={handleSelectAllOwners}
+                  className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
                 >
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.name}>
-                      👤 {emp.name} ({emp.project})
-                    </option>
-                  ))}
-                </select>
+                  {selectedOwners.length === employees.length ? '✕ ล้างทั้งหมด' : '✓ เลือกทุกคน'}
+                </button>
               </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  จำนวนการ์ดที่จะสร้าง
-                </label>
-                <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-indigo-700">
-                  สร้าง {selectedEmployeeNames.length} การ์ด (แยกตามบุคคล)
-                </div>
-              </div>
-            )}
 
+              {/* Selected Owners Badges */}
+              <div className="flex flex-wrap gap-1.5 min-h-8 items-center">
+                {selectedOwners.length === 0 ? (
+                  <span className="text-xs text-slate-400 italic">กรุณาเลือกผู้รับผิดชอบอย่างน้อย 1 คน</span>
+                ) : (
+                  selectedOwners.map((name) => {
+                    const emp = employees.find((e) => e.name === name);
+                    return (
+                      <span
+                        key={name}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-semibold shadow-xs"
+                      >
+                        <span className="text-[11px]">👤</span> {name}
+                        {emp?.project && (
+                          <span className="text-[10px] font-normal text-slate-400">({emp.project})</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleOwner(name)}
+                          className="ml-1 text-slate-400 hover:text-rose-600 font-bold cursor-pointer"
+                          title="นำออก"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Employee Quick Pick Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-1 bg-white/80 border border-indigo-100 rounded-lg">
+                {employees.map((emp) => {
+                  const isSelected = selectedOwners.includes(emp.name);
+                  return (
+                    <button
+                      type="button"
+                      key={emp.id}
+                      onClick={() => handleToggleOwner(emp.name)}
+                      className={`flex items-center gap-2 p-1.5 rounded-md text-left text-xs transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white font-semibold'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-100'
+                      }`}
+                    >
+                      <div
+                        className={`h-3.5 w-3.5 rounded flex items-center justify-center text-[9px] shrink-0 ${
+                          isSelected ? 'bg-white text-indigo-700 font-bold' : 'border border-slate-300'
+                        }`}
+                      >
+                        {isSelected && '✓'}
+                      </div>
+                      <span className="truncate">{emp.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                ความสำคัญ (Priority)
+                จำนวนการ์ดที่จะสร้าง
               </label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as Priority)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="High">High (ด่วนมาก)</option>
-                <option value="Medium">Medium (ปานกลาง)</option>
-                <option value="Low">Low (ปกติ)</option>
-              </select>
+              <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-indigo-700">
+                สร้าง {selectedEmployeeNames.length} การ์ด (แยกตามบุคคล)
+              </div>
             </div>
+          )}
+
+          {/* Priority */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              ความสำคัญ (Priority)
+            </label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as Priority)}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="High">High (ด่วนมาก)</option>
+              <option value="Medium">Medium (ปานกลาง)</option>
+              <option value="Low">Low (ปกติ)</option>
+            </select>
           </div>
 
           {/* MODE 2: Employee Multi-selection Checkboxes */}
