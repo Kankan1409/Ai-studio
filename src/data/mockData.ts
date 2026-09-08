@@ -625,7 +625,7 @@ export const INITIAL_TASKS: Task[] = [
     updatedAt: '2026-07-18T17:00:00Z',
   },
   {
-    id: 'PID-108',
+    id: 'PID-126',
     title: 'เตรียมการอัปเดตระบบ Sprint กลางปี (W34)',
     project: 'Project 1',
     priority: 'High',
@@ -642,7 +642,7 @@ export const INITIAL_TASKS: Task[] = [
   },
   // Q4 Upcoming / Planned Tasks (W40 - W52)
   {
-    id: 'PID-109',
+    id: 'PID-127',
     title: 'เปิดตัวเวอร์ชัน 2.0 รองรับการซิงค์แบบอัตโนมัติ (W42)',
     project: 'Project 1',
     priority: 'High',
@@ -658,7 +658,7 @@ export const INITIAL_TASKS: Task[] = [
     updatedAt: '2026-09-03T11:00:00Z',
   },
   {
-    id: 'PID-110',
+    id: 'PID-128',
     title: 'ขยายขีดความสามารถการสำรองข้อมูลรายสัปดาห์ (W46)',
     project: 'Infrastructure',
     priority: 'Medium',
@@ -674,7 +674,7 @@ export const INITIAL_TASKS: Task[] = [
     updatedAt: '2026-09-01T09:00:00Z',
   },
   {
-    id: 'PID-100',
+    id: 'PID-129',
     title: 'สรุปผลการดำเนินงานและปิดงวดประจำปี 2026 (W51)',
     project: 'Project 1',
     priority: 'High',

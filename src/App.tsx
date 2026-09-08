@@ -21,6 +21,29 @@ import { Task, Employee, ActiveTab, TaskStatus } from './types';
 import { INITIAL_TASKS, INITIAL_EMPLOYEES, PROJECTS_LIST } from './data/mockData';
 import { syncDataFromSource } from './utils/sheetSync';
 
+// Ensure every task has a unique ID to prevent React duplicate key collisions
+function ensureUniqueTaskIds(taskList: Task[]): Task[] {
+  if (!Array.isArray(taskList)) return [];
+  const seen = new Set<string>();
+  return taskList.map((task, idx) => {
+    let finalId = (task.id || '').trim();
+    if (!finalId || seen.has(finalId)) {
+      let counter = 1;
+      let candidate = finalId ? `${finalId}-${counter}` : `PID-${120 + idx}`;
+      while (seen.has(candidate)) {
+        counter++;
+        candidate = finalId ? `${finalId}-${counter}` : `PID-${120 + idx + counter}`;
+      }
+      finalId = candidate;
+    }
+    seen.add(finalId);
+    if (finalId !== task.id) {
+      return { ...task, id: finalId };
+    }
+    return task;
+  });
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
 
@@ -29,12 +52,15 @@ export default function App() {
     const saved = localStorage.getItem('tm_tasks');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return ensureUniqueTaskIds(parsed);
+        }
       } catch (e) {
         console.error(e);
       }
     }
-    return INITIAL_TASKS;
+    return ensureUniqueTaskIds(INITIAL_TASKS);
   });
 
   const [employees, setEmployees] = useState<Employee[]>(() => {
@@ -63,7 +89,7 @@ export default function App() {
       syncDataFromSource(gasUrl.trim())
         .then((result) => {
           if (result.success) {
-            setTasks(result.tasks);
+            setTasks(ensureUniqueTaskIds(result.tasks));
             setEmployees(result.employees);
           }
         })
@@ -128,11 +154,8 @@ export default function App() {
 
   // Handler: Add new task(s)
   const handleAddTask = (newTasks: Task | Task[]) => {
-    if (Array.isArray(newTasks)) {
-      setTasks((prev) => [...newTasks, ...prev]);
-    } else {
-      setTasks((prev) => [newTasks, ...prev]);
-    }
+    const toAdd = Array.isArray(newTasks) ? newTasks : [newTasks];
+    setTasks((prev) => ensureUniqueTaskIds([...toAdd, ...prev]));
   };
 
   // Handler: Add new employee

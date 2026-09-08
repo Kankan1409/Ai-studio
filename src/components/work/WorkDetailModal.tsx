@@ -24,6 +24,7 @@ import {
   Award,
 } from 'lucide-react';
 import { Task, TaskStatus, Priority, Subtask, Employee } from '../../types';
+import { MultiSelectDropdown } from '../common/MultiSelectDropdown';
 
 interface WorkDetailModalProps {
   task: Task | null;
@@ -548,63 +549,49 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
                   })()}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {/* Selected badges */}
-                  <div className="flex flex-wrap gap-1 p-1.5 bg-slate-50 border border-slate-200 rounded-lg min-h-8 items-center">
-                    {editedOwners.length === 0 ? (
-                      <span className="text-[11px] text-slate-400 italic">กรุณาคลิกเลือกพนักงานด้านล่าง</span>
-                    ) : (
-                      editedOwners.map((name) => (
+                <div className="space-y-1.5">
+                  <MultiSelectDropdown
+                    id="edit-task-owners-dropdown"
+                    options={employees.map((emp) => ({
+                      value: emp.name,
+                      label: emp.name,
+                      badge: emp.project || undefined,
+                      description: emp.role || undefined,
+                    }))}
+                    selectedValues={editedOwners}
+                    onChange={setEditedOwners}
+                    placeholder="เลือกผู้รับผิดชอบหลัก..."
+                    searchPlaceholder="ค้นหาชื่อพนักงาน หรือโครงการ..."
+                  />
+
+                  {editedOwners.length === 0 ? (
+                    <p className="text-[11px] text-rose-500 font-medium">
+                      ⚠️ กรุณาเลือกผู้รับผิดชอบอย่างน้อย 1 คน
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {editedOwners.map((name) => (
                         <span
                           key={name}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-white text-indigo-900 border border-indigo-200 rounded-md text-xs font-semibold shadow-2xs"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-900 border border-indigo-200/80 rounded-md text-xs font-medium"
                         >
                           👤 {name}
                           <button
                             type="button"
                             onClick={() =>
-                              setEditedOwners((prev) => prev.filter((n) => n !== name))
+                              setEditedOwners((prev) =>
+                                prev.length > 1 ? prev.filter((n) => n !== name) : prev
+                              )
                             }
-                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                            className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer text-xs leading-none"
+                            title={`นำ ${name} ออก`}
                           >
                             ×
                           </button>
                         </span>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Checkbox grid */}
-                  <div className="grid grid-cols-2 gap-1 max-h-36 overflow-y-auto p-1 border border-slate-200 rounded-lg bg-white">
-                    {employees.map((emp) => {
-                      const isSel = editedOwners.includes(emp.name);
-                      return (
-                        <button
-                          key={emp.id}
-                          type="button"
-                          onClick={() =>
-                            setEditedOwners((prev) =>
-                              isSel ? prev.filter((n) => n !== emp.name) : [...prev, emp.name]
-                            )
-                          }
-                          className={`flex items-center gap-1.5 p-1.5 rounded-md text-left text-xs transition-all cursor-pointer ${
-                            isSel
-                              ? 'bg-indigo-600 text-white font-semibold'
-                              : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          <div
-                            className={`h-3.5 w-3.5 rounded flex items-center justify-center text-[9px] shrink-0 ${
-                              isSel ? 'bg-white text-indigo-700 font-bold' : 'border border-slate-300'
-                            }`}
-                          >
-                            {isSel && '✓'}
-                          </div>
-                          <span className="truncate">{emp.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

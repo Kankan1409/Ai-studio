@@ -11,8 +11,11 @@ import {
   Layers,
   Copy,
   Info,
+  Search,
+  Check,
 } from 'lucide-react';
 import { Task, Priority, TaskStatus, Employee, Subtask } from '../../types';
+import { MultiSelectDropdown } from '../common/MultiSelectDropdown';
 
 interface AddTaskModalProps {
   isOpen: boolean;
@@ -79,6 +82,7 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
   const [selectedOwners, setSelectedOwners] = useState<string[]>(() =>
     employees[0]?.name ? [employees[0].name] : ['พี่ไมค์']
   );
+  const [ownerSelectView, setOwnerSelectView] = useState<'select_multiple' | 'dropdown'>('select_multiple');
   const [sharedSubtasks, setSharedSubtasks] = useState<
     Array<{ id: string; title: string; assignee?: string }>
   >([
@@ -87,22 +91,6 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
   ]);
   const [newSharedSubtaskTitle, setNewSharedSubtaskTitle] = useState('');
   const [newSharedSubtaskAssignee, setNewSharedSubtaskAssignee] = useState(employees[0]?.name || '');
-
-  const handleToggleOwner = (empName: string) => {
-    setSelectedOwners((prev) =>
-      prev.includes(empName)
-        ? (prev.length > 1 ? prev.filter((n) => n !== empName) : prev)
-        : [...prev, empName]
-    );
-  };
-
-  const handleSelectAllOwners = () => {
-    if (selectedOwners.length === employees.length) {
-      setSelectedOwners(employees[0]?.name ? [employees[0].name] : []);
-    } else {
-      setSelectedOwners(employees.map((e) => e.name));
-    }
-  };
 
   // Mode 2: Template Batch Assign State
   const [selectedEmployeeNames, setSelectedEmployeeNames] = useState<string[]>(
@@ -496,80 +484,143 @@ export const AddTaskModal: React.FC<AddTaskModalProps> = ({
 
           {/* Lead Owner / Card count */}
           {mode === 'shared' ? (
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold text-slate-800">
-                  ผู้รับผิดชอบหลัก (Lead Owners)
-                  <span className="ml-1.5 text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-full">
-                    เลือกแล้ว {selectedOwners.length} คน
+            <div className="space-y-2 rounded-xl border border-indigo-100/90 bg-indigo-50/40 p-3.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <label htmlFor="task-lead-owners-select-multiple" className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Users className="h-4 w-4 text-indigo-600" />
+                  <span>ผู้รับผิดชอบหลัก (Lead Owners)</span>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-mono font-bold">
+                    Select Multiple
                   </span>
                 </label>
-                <button
-                  type="button"
-                  onClick={handleSelectAllOwners}
-                  className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
-                >
-                  {selectedOwners.length === employees.length ? '✕ ล้างทั้งหมด' : '✓ เลือกทุกคน'}
-                </button>
-              </div>
 
-              {/* Selected Owners Badges */}
-              <div className="flex flex-wrap gap-1.5 min-h-8 items-center">
-                {selectedOwners.length === 0 ? (
-                  <span className="text-xs text-slate-400 italic">กรุณาเลือกผู้รับผิดชอบอย่างน้อย 1 คน</span>
-                ) : (
-                  selectedOwners.map((name) => {
-                    const emp = employees.find((e) => e.name === name);
-                    return (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-semibold shadow-xs"
-                      >
-                        <span className="text-[11px]">👤</span> {name}
-                        {emp?.project && (
-                          <span className="text-[10px] font-normal text-slate-400">({emp.project})</span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleToggleOwner(name)}
-                          className="ml-1 text-slate-400 hover:text-rose-600 font-bold cursor-pointer"
-                          title="นำออก"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Employee Quick Pick Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-1 bg-white/80 border border-indigo-100 rounded-lg">
-                {employees.map((emp) => {
-                  const isSelected = selectedOwners.includes(emp.name);
-                  return (
+                <div className="flex items-center gap-2">
+                  {selectedOwners.length > 0 && (
+                    <span className="text-[11px] font-semibold text-indigo-600">
+                      เลือกแล้ว {selectedOwners.length} คน
+                    </span>
+                  )}
+                  {/* View switcher: Select Multiple Box vs Dropdown */}
+                  <div className="inline-flex rounded-lg bg-slate-200/80 p-0.5 text-[11px]">
                     <button
                       type="button"
-                      key={emp.id}
-                      onClick={() => handleToggleOwner(emp.name)}
-                      className={`flex items-center gap-2 p-1.5 rounded-md text-left text-xs transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-indigo-600 text-white font-semibold'
-                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-100'
+                      onClick={() => setOwnerSelectView('select_multiple')}
+                      className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                        ownerSelectView === 'select_multiple'
+                          ? 'bg-white text-indigo-700 shadow-2xs font-semibold'
+                          : 'text-slate-600 hover:text-slate-900'
                       }`}
+                      title="แสดงแบบกล่อง Select Multiple"
                     >
-                      <div
-                        className={`h-3.5 w-3.5 rounded flex items-center justify-center text-[9px] shrink-0 ${
-                          isSelected ? 'bg-white text-indigo-700 font-bold' : 'border border-slate-300'
-                        }`}
-                      >
-                        {isSelected && '✓'}
-                      </div>
-                      <span className="truncate">{emp.name}</span>
+                      กล่องเลือก (Select Multiple)
                     </button>
-                  );
-                })}
+                    <button
+                      type="button"
+                      onClick={() => setOwnerSelectView('dropdown')}
+                      className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                        ownerSelectView === 'dropdown'
+                          ? 'bg-white text-indigo-700 shadow-2xs font-semibold'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="แสดงแบบ Dropdown ค้นหา"
+                    >
+                      Dropdown ค้นหา
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              {ownerSelectView === 'select_multiple' ? (
+                <div className="space-y-1.5">
+                  <select
+                    id="task-lead-owners-select-multiple"
+                    multiple
+                    size={Math.min(5, Math.max(3, employees.length))}
+                    value={selectedOwners}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map(
+                        (option) => (option as HTMLOptionElement).value
+                      );
+                      setSelectedOwners(selected);
+                    }}
+                    className="w-full rounded-xl border border-slate-300 bg-white p-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs font-medium cursor-pointer"
+                  >
+                    {employees.map((emp) => (
+                      <option
+                        key={emp.id}
+                        value={emp.name}
+                        className="py-1 px-2 rounded hover:bg-indigo-50 checked:bg-indigo-600 checked:text-white"
+                      >
+                        👤 {emp.name} {emp.project ? `(${emp.project})` : ''} {emp.role ? `• ${emp.role}` : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 px-0.5">
+                    <span>💡 กด <kbd className="px-1 py-0.5 bg-slate-200 text-slate-700 rounded font-mono text-[10px] font-bold">Ctrl</kbd> หรือ <kbd className="px-1 py-0.5 bg-slate-200 text-slate-700 rounded font-mono text-[10px] font-bold">Cmd</kbd> ค้างไว้เพื่อคลิกเลือกได้หลายคน</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOwners(employees.map((e) => e.name))}
+                        className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                      >
+                        เลือกทุกคน
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOwners([])}
+                        className="text-slate-500 hover:text-slate-700 cursor-pointer"
+                      >
+                        ล้าง
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <MultiSelectDropdown
+                  id="task-lead-owners-dropdown"
+                  options={employees.map((emp) => ({
+                    value: emp.name,
+                    label: emp.name,
+                    badge: emp.project || undefined,
+                    description: emp.role || undefined,
+                  }))}
+                  selectedValues={selectedOwners}
+                  onChange={setSelectedOwners}
+                  placeholder="เลือกผู้รับผิดชอบหลัก..."
+                  searchPlaceholder="ค้นหาชื่อพนักงาน หรือโครงการ..."
+                />
+              )}
+
+              {selectedOwners.length === 0 ? (
+                <p className="text-[11px] text-rose-500 font-medium">
+                  ⚠️ กรุณาเลือกผู้รับผิดชอบหลักอย่างน้อย 1 คน
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {selectedOwners.map((name) => (
+                    <span
+                      key={name}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white text-indigo-900 border border-indigo-200 rounded-lg text-xs font-semibold shadow-2xs"
+                    >
+                      <span>👤 {name}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedOwners((prev) =>
+                            prev.filter((n) => n !== name)
+                          )
+                        }
+                        className="text-slate-400 hover:text-rose-600 font-bold cursor-pointer text-xs leading-none"
+                        title={`นำ ${name} ออก`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div>

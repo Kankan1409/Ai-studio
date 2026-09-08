@@ -25,3 +25,6 @@ export { GoogleSheetGuideView } from './sheets/GoogleSheetGuideView';
 // Settings & Modals
 export { SettingsView } from './settings/SettingsView';
 export { AboutModal } from './modals/AboutModal';
+
+// Common UI components
+export { MultiSelectDropdown } from './common/MultiSelectDropdown';

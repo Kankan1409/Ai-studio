@@ -22,14 +22,20 @@ const SHEET_EMPLOYEES = "Employees";
  * เมนูเมื่อเปิดไฟล์ Google Sheets ขึ้นมา
  */
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu("📋 Task Manager")
-    .addItem("🚀 เปิดระบบ Task Manager (หน้าต่างใหญ่เต็มจอ)", "showTaskManagerDialog")
-    .addItem("🌐 เปิด Web App เต็มหน้าจอเบราว์เซอร์", "openFullScreenWebApp")
-    .addItem("📱 เปิดแถบข้าง (Sidebar)", "showTaskManagerSidebar")
-    .addSeparator()
-    .addItem("⚡ สร้างหัวตารางชีต (Tasks & Employees) หากยังไม่มี", "initSheetHeaders")
-    .addToUi();
+  try {
+    const ui = SpreadsheetApp.getUi();
+    if (ui) {
+      ui.createMenu("📋 Task Manager")
+        .addItem("🚀 เปิดระบบ Task Manager (หน้าต่างใหญ่เต็มจอ)", "showTaskManagerDialog")
+        .addItem("🌐 เปิด Web App เต็มหน้าจอเบราว์เซอร์", "openFullScreenWebApp")
+        .addItem("📱 เปิดแถบข้าง (Sidebar)", "showTaskManagerSidebar")
+        .addSeparator()
+        .addItem("⚡ สร้างหัวตารางชีต (Tasks & Employees) หากยังไม่มี", "initSheetHeaders")
+        .addToUi();
+    }
+  } catch (err) {
+    Logger.log("onOpen Error: " + err.toString());
+  }
 }
 
 /**
@@ -249,17 +255,20 @@ function apiSaveTask(task, originalId) {
       }
     }
 
-    // แปลง Subtasks / Checklist: เก็บเฉพาะข้อความตัวอักษรที่พิมพ์ในช่อง (Plain text บรรทัดต่อบรรทัด) ไม่เก็บเป็น JSON
+    // แปลง Subtasks / Checklist: เก็บลงคอลัมน์ Check List เป็นข้อความบรรทัดต่อบรรทัด (เช่น [x] ตรวจสอบ หรือ [ ] ออกแบบ)
     let subtasksText = "";
     if (Array.isArray(task.subtasks)) {
       subtasksText = task.subtasks
         .map(function(s) {
           if (!s) return "";
           if (typeof s === "string") return s.trim();
-          return String(s.title || s.name || "").trim();
+          var itemTitle = String(s.title || s.name || "").trim();
+          if (!itemTitle) return "";
+          var prefix = s.completed ? "[x] " : "[ ] ";
+          return prefix + itemTitle;
         })
         .filter(function(text) { return text.length > 0; })
-        .join("\n");
+        .join(String.fromCharCode(10));
     } else if (typeof task.subtasks === "string") {
       subtasksText = task.subtasks.trim();
     }
@@ -293,12 +302,13 @@ function apiSaveTask(task, originalId) {
       "Project Progress": progressVal,
       "Progress": progressVal,
       "Progress Bar": progressBarVal,
-      "Subtasks": subtasksText,
-      "Subtask": subtasksText,
+      "Check List": subtasksText,
       "Checklist": subtasksText,
+      "Check list": subtasksText,
       "Detail Checklist": subtasksText,
       "Detail checklist": subtasksText,
-      "Check list": subtasksText,
+      "Subtasks": subtasksText,
+      "Subtask": subtasksText,
       "Checklist Detail": subtasksText,
       "งานย่อย": subtasksText,
       "รายการย่อย": subtasksText,
@@ -502,7 +512,7 @@ function apiDeleteEmployee(empId) {
 function initSheetHeaders() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // 1. ชีต Tasks (15 Columns ตามโครงสร้างที่กำหนด)
+  // 1. ชีต Tasks (16 Columns รวมคอลัมน์ Check List ตามโครงสร้างที่กำหนด)
   let taskSheet = ss.getSheetByName(SHEET_TASKS);
   if (!taskSheet) {
     taskSheet = ss.insertSheet(SHEET_TASKS);
@@ -523,7 +533,8 @@ function initSheetHeaders() {
     "Result / Outcome",
     "Project Link",
     "Project Progress",
-    "Progress Bar"
+    "Progress Bar",
+    "Check List"
   ];
 
   if (taskSheet.getLastRow() === 0) {
@@ -648,14 +659,29 @@ function parseGasSubtasksText(val) {
     } catch (e) {}
   }
 
-  // ตัวอักษรที่พิมพ์ในช่อง (Plain text บรรทัดต่อบรรทัด หรือคั่นด้วยลูกน้ำ)
-  var lines = str.split(/[\r\n]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+  // ตัวอักษรที่พิมพ์ในช่อง Check List (Plain text บรรทัดต่อบรรทัด หรือ [x] / [ ] หรือคั่นด้วยลูกน้ำ)
+  var lines = str.split(String.fromCharCode(10)).map(function(s) { return s.replace(String.fromCharCode(13), '').trim(); }).filter(Boolean);
   if (lines.length > 0) {
     return lines.map(function(line, idx) {
+      var isDone = false;
+      var cleanTitle = line.trim();
+      if (cleanTitle.indexOf('[x] ') === 0 || cleanTitle.indexOf('[X] ') === 0) {
+        isDone = true;
+        cleanTitle = cleanTitle.substring(4).trim();
+      } else if (cleanTitle.indexOf('[x]') === 0 || cleanTitle.indexOf('[X]') === 0) {
+        isDone = true;
+        cleanTitle = cleanTitle.substring(3).trim();
+      } else if (cleanTitle.indexOf('[ ] ') === 0 || cleanTitle.indexOf('[] ') === 0) {
+        cleanTitle = cleanTitle.indexOf('[ ] ') === 0 ? cleanTitle.substring(4).trim() : cleanTitle.substring(3).trim();
+      } else if (cleanTitle.indexOf('[ ]') === 0 || cleanTitle.indexOf('[]') === 0) {
+        cleanTitle = cleanTitle.indexOf('[ ]') === 0 ? cleanTitle.substring(3).trim() : cleanTitle.substring(2).trim();
+      } else if (cleanTitle.indexOf('- ') === 0 || cleanTitle.indexOf('* ') === 0 || cleanTitle.indexOf('• ') === 0) {
+        cleanTitle = cleanTitle.substring(2).trim();
+      }
       return {
         id: 'st-' + (idx + 1),
-        title: line.replace(/^[-•*]\s*/, ''),
-        completed: false
+        title: cleanTitle.trim(),
+        completed: isDone
       };
     });
   }
@@ -728,7 +754,7 @@ function getSheetData(ss, sheetName) {
       const progress = formatGasProgress(item["Project Progress"] !== undefined ? item["Project Progress"] : item["Progress"]);
       const progressBar = String(item["Progress Bar"] || item["ProgressBar"] || (progress + "%")).trim();
 
-      const rawSubtasks = item["Subtasks"] || item["Subtask"] || item["Checklist"] || item["Detail Checklist"] || item["Detail checklist"] || item["Check list"] || item["Checklist Detail"] || item["งานย่อย"] || item["รายการย่อย"] || item["Detail"] || "";
+      const rawSubtasks = item["Check List"] || item["Checklist"] || item["Check list"] || item["Detail Checklist"] || item["Detail checklist"] || item["Subtasks"] || item["Subtask"] || item["Checklist Detail"] || item["งานย่อย"] || item["รายการย่อย"] || item["Detail"] || "";
       const parsedSubtasks = parseGasSubtasksText(rawSubtasks);
 
       results.push({
@@ -1209,8 +1235,8 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
         </div>
       </div>
 
-      <!-- Priority & Due Date -->
-      <div class="grid grid-cols-2 gap-4">
+      <!-- Priority, Start Date & Due Date -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label class="block text-slate-500 font-semibold mb-1">ความสำคัญ (Priority)</label>
           <div id="detail-priority-view" class="font-bold text-slate-800 text-xs">-</div>
@@ -1222,7 +1248,12 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
           </select>
         </div>
         <div>
-          <label class="block text-slate-500 font-semibold mb-1">กำหนดส่ง (Due Date)</label>
+          <label class="block text-slate-500 font-semibold mb-1">📅 วันเริ่มงาน (Start)</label>
+          <div id="detail-startdate-view" class="text-slate-800 font-medium">-</div>
+          <input type="date" id="detail-startdate-input" class="hidden w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
+        </div>
+        <div>
+          <label class="block text-slate-500 font-semibold mb-1">📅 กำหนดส่ง (Due)</label>
           <div id="detail-duedate-view" class="text-slate-800 font-medium">2026-09-06</div>
           <input type="date" id="detail-duedate-input" class="hidden w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
         </div>
@@ -1385,11 +1416,23 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
             <option value="แผนก/ออกแบบ">แผนก/ออกแบบ</option>
           </select>
         </div>
-        <div id="gas-field-owner-container">
-          <label class="block font-semibold text-slate-700 mb-1">ผู้รับผิดชอบหลัก</label>
-          <select id="new-task-owner" class="w-full px-3 py-2 rounded-xl border border-slate-300">
+        <div id="gas-field-owner-container" class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="block font-semibold text-slate-700 text-xs">ผู้รับผิดชอบหลัก (Lead Owners)</label>
+            <span id="new-task-owner-count" class="text-[11px] font-semibold text-indigo-600">เลือกแล้ว 1 คน</span>
+          </div>
+          <select id="new-task-owner" multiple size="4" onchange="handleGasOwnerSelectChange()" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
             <!-- Injected by JS -->
           </select>
+          <div class="flex items-center justify-between text-[11px] text-slate-500">
+            <span>💡 กด <kbd class="px-1 py-0.5 bg-slate-200 text-slate-700 rounded font-mono text-[10px] font-bold">Ctrl</kbd> หรือ <kbd class="px-1 py-0.5 bg-slate-200 text-slate-700 rounded font-mono text-[10px] font-bold">Cmd</kbd> ค้างไว้เพื่อเลือกหลายคน</span>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="selectAllGasOwners(true)" class="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer">เลือกทุกคน</button>
+              <span class="text-slate-300">|</span>
+              <button type="button" onclick="selectAllGasOwners(false)" class="text-slate-500 hover:text-slate-700 cursor-pointer">ล้าง</button>
+            </div>
+          </div>
+          <div id="new-task-owner-chips" class="flex flex-wrap gap-1 pt-0.5"></div>
         </div>
       </div>
 
@@ -1404,7 +1447,7 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label class="block font-semibold text-slate-700 mb-1">ความสำคัญ</label>
           <select id="new-task-priority" class="w-full px-3 py-2 rounded-xl border border-slate-300">
@@ -1414,7 +1457,11 @@ export const GAS_MODALS_HTML = `<!-- Modals.html: หน้าต่างป๊
           </select>
         </div>
         <div>
-          <label class="block font-semibold text-slate-700 mb-1">กำหนดส่ง</label>
+          <label class="block font-semibold text-slate-700 mb-1">📅 วันที่เริ่มงาน (Start)</label>
+          <input type="date" id="new-task-startdate" class="w-full px-3 py-2 rounded-xl border border-slate-300">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">📅 กำหนดส่ง (Due)</label>
           <input type="date" id="new-task-duedate" class="w-full px-3 py-2 rounded-xl border border-slate-300">
         </div>
       </div>
@@ -2575,9 +2622,10 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
   function populateOwnerDropdown() {
     const select = document.getElementById('new-task-owner');
     if (select) {
-      select.innerHTML = appEmployees.map(e => \`
-        <option value="\${e.name}">\${e.name} (\${e.project})</option>
+      select.innerHTML = appEmployees.map((e, idx) => \`
+        <option value="\${e.name}" \${idx === 0 ? 'selected' : ''}>👤 \${e.name} (\${e.project})</option>
       \`).join('');
+      handleGasOwnerSelectChange();
     }
     const editOwnerSelect = document.getElementById('detail-owner-input');
     if (editOwnerSelect) {
@@ -2585,6 +2633,45 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
         <option value="\${e.name}">\${e.name} (\${e.project})</option>
       \`).join('');
     }
+  }
+
+  function handleGasOwnerSelectChange() {
+    const select = document.getElementById('new-task-owner');
+    if (!select) return;
+    const selected = Array.from(select.selectedOptions).map(o => o.value);
+    const countEl = document.getElementById('new-task-owner-count');
+    if (countEl) {
+      countEl.innerText = 'เลือกแล้ว ' + selected.length + ' คน';
+    }
+    const chipsEl = document.getElementById('new-task-owner-chips');
+    if (chipsEl) {
+      chipsEl.innerHTML = selected.map(name => 
+        '<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-900 border border-indigo-200 rounded text-[11px] font-medium">' +
+          '<span>👤 ' + name + '</span>' +
+          '<button type="button" onclick="removeGasOwner(\\'' + name.replace(/'/g, "\\'") + '\\')" class="text-slate-400 hover:text-rose-600 ml-1 font-bold cursor-pointer">×</button>' +
+        '</span>'
+      ).join('');
+    }
+  }
+
+  function selectAllGasOwners(selectAll) {
+    const select = document.getElementById('new-task-owner');
+    if (!select) return;
+    for (let i = 0; i < select.options.length; i++) {
+      select.options[i].selected = selectAll;
+    }
+    handleGasOwnerSelectChange();
+  }
+
+  function removeGasOwner(name) {
+    const select = document.getElementById('new-task-owner');
+    if (!select) return;
+    for (let i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === name) {
+        select.options[i].selected = false;
+      }
+    }
+    handleGasOwnerSelectChange();
   }
 
   function applyFilters() {
@@ -2638,6 +2725,9 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     document.getElementById('detail-priority-view').innerText = currentDetailTask.priority;
     document.getElementById('detail-priority-input').value = currentDetailTask.priority;
 
+    document.getElementById('detail-startdate-view').innerText = currentDetailTask.startDate || '-';
+    document.getElementById('detail-startdate-input').value = currentDetailTask.startDate || '';
+
     document.getElementById('detail-duedate-view').innerText = currentDetailTask.dueDate || '-';
     document.getElementById('detail-duedate-input').value = currentDetailTask.dueDate || '';
 
@@ -2671,8 +2761,8 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       if (idInput) idInput.value = currentDetailTask.id;
     }
 
-    const viewElements = ['detail-title-view', 'detail-project-view', 'detail-owner-view', 'detail-priority-view', 'detail-duedate-view', 'detail-desc-view'];
-    const inputElements = ['detail-title-input', 'detail-project-input', 'detail-owner-input', 'detail-priority-input', 'detail-duedate-input', 'detail-desc-input'];
+    const viewElements = ['detail-title-view', 'detail-project-view', 'detail-owner-view', 'detail-priority-view', 'detail-startdate-view', 'detail-duedate-view', 'detail-desc-view'];
+    const inputElements = ['detail-title-input', 'detail-project-input', 'detail-owner-input', 'detail-priority-input', 'detail-startdate-input', 'detail-duedate-input', 'detail-desc-input'];
 
     viewElements.forEach(id => {
       const el = document.getElementById(id);
@@ -2883,6 +2973,7 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       const projInput = document.getElementById('detail-project-input');
       const ownerInput = document.getElementById('detail-owner-input');
       const prioInput = document.getElementById('detail-priority-input');
+      const startInput = document.getElementById('detail-startdate-input');
       const dueInput = document.getElementById('detail-duedate-input');
       const descInput = document.getElementById('detail-desc-input');
 
@@ -2891,6 +2982,7 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
       if (projInput && projInput.value.trim()) currentDetailTask.project = projInput.value.trim();
       if (ownerInput && ownerInput.value) currentDetailTask.owner = ownerInput.value;
       if (prioInput && prioInput.value) currentDetailTask.priority = prioInput.value;
+      if (startInput) currentDetailTask.startDate = startInput.value;
       if (dueInput) currentDetailTask.dueDate = dueInput.value;
       if (descInput) currentDetailTask.description = descInput.value;
     }
@@ -3127,13 +3219,17 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
   function openAddTaskModal() {
     document.getElementById('new-task-title').value = '';
     document.getElementById('new-task-desc').value = '';
+    const todayStr = new Date().toISOString().split('T')[0];
+    const startInput = document.getElementById('new-task-startdate');
+    if (startInput) startInput.value = todayStr;
     document.getElementById('new-task-duedate').value = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
     resetNewTaskIdAuto();
 
     // Populate owner select
     const ownerSelect = document.getElementById('new-task-owner');
     if (ownerSelect) {
-      ownerSelect.innerHTML = appEmployees.map(emp => '<option value="' + emp.name + '">👤 ' + emp.name + ' (' + emp.project + ')</option>').join('');
+      ownerSelect.innerHTML = appEmployees.map((emp, idx) => '<option value="' + emp.name + '" ' + (idx === 0 ? 'selected' : '') + '>👤 ' + emp.name + ' (' + emp.project + ')</option>').join('');
+      handleGasOwnerSelectChange();
     }
 
     // Populate subtask assignee select
@@ -3153,12 +3249,24 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     const title = document.getElementById('new-task-title').value;
     const project = document.getElementById('new-task-project').value;
     const priority = document.getElementById('new-task-priority').value;
+    const startDate = (document.getElementById('new-task-startdate') && document.getElementById('new-task-startdate').value) || new Date().toISOString().split('T')[0];
     const dueDate = document.getElementById('new-task-duedate').value;
     const description = document.getElementById('new-task-desc').value;
 
+    let duration = '';
+    if (startDate && dueDate) {
+      const s = new Date(startDate);
+      const d = new Date(dueDate);
+      const diffTime = d.getTime() - s.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      if (!isNaN(diffDays) && diffDays >= 0) {
+        duration = (diffDays + 1) + ' วัน';
+      }
+    }
+
     // Calculate base PID
     const nums = appTasks.map(t => {
-      const m = t.id.match(/PID-(\\\\d+)/);
+      const m = t.id.match(/PID-(\d+)/);
       return m ? parseInt(m[1], 10) : 0;
     });
     const nextNum = (nums.length > 0 ? Math.max(...nums) : 100) + 1;
@@ -3166,8 +3274,10 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
     const finalBaseId = customIdVal || ('PID-' + nextNum);
 
     if (gasAddTaskMode === 'shared') {
-      const owner = document.getElementById('new-task-owner').value;
-      const ownerData = appEmployees.find(emp => emp.name === owner);
+      const ownerSelect = document.getElementById('new-task-owner');
+      const selectedOwnerList = ownerSelect ? Array.from(ownerSelect.selectedOptions).map(o => o.value) : [];
+      const owner = selectedOwnerList.length > 0 ? selectedOwnerList.join(', ') : (appEmployees[0] ? appEmployees[0].name : 'พี่ไมค์');
+      const ownerData = appEmployees.find(emp => emp.name === (selectedOwnerList[0] || owner));
       const newId = finalBaseId;
 
       const subtasksFormatted = gasSharedSubtasks.map((st, idx) => ({
@@ -3187,7 +3297,9 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
         ownerAvatar: ownerData ? ownerData.avatar : '',
         priority: priority,
         status: 'Todo',
+        startDate: startDate,
         dueDate: dueDate,
+        duration: duration,
         description: description,
         progress: 0,
         subtasks: subtasksFormatted
@@ -3225,7 +3337,9 @@ export const GAS_JAVASCRIPT_HTML = `<!-- JavaScript.html: โค้ดควบ�
           ownerAvatar: emp ? emp.avatar : '',
           priority: priority,
           status: 'Todo',
+          startDate: startDate,
           dueDate: dueDate,
+          duration: duration,
           description: description,
           progress: 0,
           subtasks: subtasksCopy

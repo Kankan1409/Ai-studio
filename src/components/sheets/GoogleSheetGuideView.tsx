@@ -20,6 +20,7 @@ import {
   Terminal,
   ChevronRight,
   ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { Task, Employee } from '../../types';
 import {
@@ -42,10 +43,11 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'gas_app' | 'schema' | 'guide'>('gas_app');
   const [gasMode, setGasMode] = useState<'modular' | 'bundle'>('modular');
-  const [selectedModularFileId, setSelectedModularFileId] = useState<string>('index_modular');
+  const [selectedModularFileId, setSelectedModularFileId] = useState<string>('code_gs');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [activeGasFile, setActiveGasFile] = useState<'code_gs' | 'index_html'>('code_gs');
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [showSyntaxErrorHelp, setShowSyntaxErrorHelp] = useState(false);
 
   const copyToClipboard = (text: string, sectionKey: string) => {
     navigator.clipboard.writeText(text);
@@ -98,9 +100,13 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
       'Project Link',
       'Project Progress',
       'Progress Bar',
+      'Check List',
     ].join('\t'),
-    ...tasks.map((t) =>
-      [
+    ...tasks.map((t) => {
+      const subtaskStr = (t.subtasks && t.subtasks.length > 0)
+        ? t.subtasks.map((s) => (s.completed ? '[x] ' : '[ ] ') + s.title).join('\n')
+        : '';
+      return [
         t.id,
         t.category || t.project || '',
         `"${t.title.replace(/"/g, '""')}"`,
@@ -116,8 +122,9 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
         t.projectLink || '',
         t.progress || 0,
         t.progressBar || `${t.progress || 0}%`,
-      ].join('\t')
-    ),
+        `"${subtaskStr.replace(/"/g, '""')}"`,
+      ].join('\t');
+    }),
   ].join('\n');
 
   // Generate TSV for Employees (4 Columns matching Google Sheet)
@@ -298,6 +305,51 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
             </div>
           </div>
 
+          {/* Quick Troubleshooting Banner: Unexpected token '<' */}
+          <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-amber-100 text-amber-800 shrink-0 mt-0.5">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
+                    <span>วิธีแก้ข้อผิดพลาด: </span>
+                    <code className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-mono text-[11px] font-semibold">
+                      SyntaxError: Unexpected token '&lt;' บรรทัด: 2 ไฟล์: รหัส.gs
+                    </code>
+                  </h4>
+                  <button
+                    onClick={() => setShowSyntaxErrorHelp(!showSyntaxErrorHelp)}
+                    className="text-xs font-semibold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                  >
+                    {showSyntaxErrorHelp ? 'ซ่อนคำอธิบาย' : 'ดูสาเหตุและวิธีแก้ (คลิก)'}
+                  </button>
+                </div>
+                <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                  <strong>สาเหตุ:</strong> เกิดจากการนำโค้ดที่เป็น <strong>HTML</strong> (เช่น <code className="bg-amber-100 px-1 rounded font-mono">Index.html</code> ที่ขึ้นต้นด้วย <code className="bg-amber-100 px-1 rounded font-mono">&lt;!DOCTYPE html&gt;</code>) ไปวางในไฟล์ <strong>รหัส.gs</strong> (Code.gs) ซึ่งระบบ Apps Script บังคับให้เป็นภาษา JavaScript เท่านั้น
+                </p>
+
+                {showSyntaxErrorHelp && (
+                  <div className="mt-3 pt-3 border-t border-amber-200/80 text-xs text-amber-950 space-y-2">
+                    <p className="font-semibold text-amber-900">วิธีแก้ไข 3 ขั้นตอนง่ายๆ:</p>
+                    <ol className="list-decimal list-inside space-y-1.5 pl-1 leading-relaxed text-slate-800">
+                      <li>
+                        <strong>เปิดไฟล์ "รหัส.gs" (หรือ Code.gs) ใน Apps Script:</strong> ลบโค้ดข้างในออกทั้งหมดให้เป็นหน้าว่างๆ
+                      </li>
+                      <li>
+                        <strong>วางเฉพาะโค้ดจาก Code.gs:</strong> เลือกไฟล์ <span className="bg-indigo-100 text-indigo-900 font-mono font-bold px-1.5 py-0.5 rounded">Code.gs</span> ด้านล่างนี้ แล้วกดปุ่ม <em>"คัดลอก Code.gs"</em> นำไปวางในไฟล์ <strong>รหัส.gs</strong> แล้วกดบันทึก (Ctrl+S)
+                      </li>
+                      <li>
+                        <strong>สร้างไฟล์ HTML สำหรับ Index.html:</strong> ใน Apps Script ให้คลิกเครื่องหมายบวก <strong className="text-indigo-700 bg-white border border-slate-300 px-1.5 py-0.5 rounded font-bold">+</strong> ถัดจากคำว่า "ไฟล์" &gt; เลือก <strong className="text-indigo-700">HTML</strong> &gt; พิมพ์ชื่อ <code className="bg-slate-100 text-slate-900 font-mono font-bold px-1.5 py-0.5 rounded">Index</code> (ไม่ต้องพิมพ์ .html) แล้วนำโค้ดจาก <span className="bg-indigo-100 text-indigo-900 font-mono font-bold px-1.5 py-0.5 rounded">Index.html</span> ไปวาง
+                      </li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* ================= MODULAR MODE VIEW ================= */}
           {gasMode === 'modular' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -443,23 +495,34 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 </div>
 
                 {/* Quick Step Guide for Creating This File in Apps Script */}
-                <div className="bg-slate-800/80 px-4 py-2 text-[11px] text-slate-300 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
+                <div
+                  className={`px-4 py-2.5 text-[11px] border-b flex flex-wrap items-center justify-between gap-2 ${
+                    currentModularFile.type === 'gs'
+                      ? 'bg-emerald-950/80 text-emerald-200 border-emerald-800/80'
+                      : 'bg-indigo-950/80 text-indigo-200 border-indigo-800/80'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                        currentModularFile.type === 'gs'
+                          ? 'bg-emerald-400 animate-pulse'
+                          : 'bg-indigo-400'
+                      }`}
+                    ></span>
                     <span>
-                      วิธีสร้างใน Apps Script:{' '}
                       {currentModularFile.type === 'gs' ? (
                         <span>
-                          วางในไฟล์ <strong className="text-white">Code.gs</strong> เดิมได้เลย
+                          วางในไฟล์ <strong className="text-white bg-slate-900 px-1.5 py-0.5 rounded font-mono font-bold">รหัส.gs</strong> (หรือ Code.gs) — ลบโค้ดเดิมออกทั้งหมดแล้ววาง (ต้องเป็นโค้ดสคริปต์นี้เท่านั้น ห้ามนำโค้ด HTML มาวาง)
                         </span>
                       ) : (
                         <span>
-                          กดปุ่ม <strong className="text-white">+</strong> &gt; เลือก{' '}
-                          <strong className="text-white">HTML</strong> &gt; พิมพ์ชื่อ{' '}
-                          <strong className="text-indigo-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono">
+                          <strong className="text-amber-300">⚠️ เป็นไฟล์ HTML (ห้ามวางใน รหัส.gs):</strong> ให้กดปุ่ม <strong className="text-white font-bold">+</strong> ใน Apps Script &gt; เลือก{' '}
+                          <strong className="text-white font-bold">HTML</strong> &gt; พิมพ์ชื่อ{' '}
+                          <strong className="text-white bg-slate-900 px-1.5 py-0.5 rounded font-mono font-bold">
                             {currentModularFile.filename.replace('.html', '')}
                           </strong>{' '}
-                          (ไม่ต้องพิมพ์ .html)
+                          (ไม่ต้องพิมพ์ .html) แล้วนำโค้ดนี้ไปวาง
                         </span>
                       )}
                     </span>
@@ -620,14 +683,14 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 ) : (
                   <>
                     <Copy className="h-4 w-4" />
-                    <span>คัดลอกตาราง Tasks ทั้งหมด (15 คอลัมน์)</span>
+                    <span>คัดลอกตาราง Tasks ทั้งหมด (16 คอลัมน์ รวม Check List)</span>
                   </>
                 )}
               </button>
             </div>
 
-            {/* Column Definitions explanation (15 Columns A - O) */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 text-xs">
+            {/* Column Definitions explanation (16 Columns A - P) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
                 <span className="font-mono font-bold text-indigo-600">A: Project ID</span>
                 <p className="text-slate-500 text-[11px] mt-0.5">รหัสโปรเจกต์ เช่น PID-123</p>
@@ -648,9 +711,9 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 <span className="font-mono font-bold text-indigo-600">E: Tech Stack / Tools</span>
                 <p className="text-slate-500 text-[11px] mt-0.5">เครื่องมือ เช่น React, Tailwind, Figma</p>
               </div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="font-mono font-bold text-indigo-600">F: Start Date</span>
-                <p className="text-slate-500 text-[11px] mt-0.5">วันที่เริ่ม (YYYY-MM-DD)</p>
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
+                <span className="font-mono font-bold text-emerald-700">F: Start Date</span>
+                <p className="text-slate-600 text-[11px] mt-0.5">📅 วันที่เริ่มงาน (YYYY-MM-DD)</p>
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
                 <span className="font-mono font-bold text-indigo-600">G: Due Date</span>
@@ -688,23 +751,29 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                 <span className="font-mono font-bold text-indigo-600">O: Progress Bar</span>
                 <p className="text-slate-500 text-[11px] mt-0.5">แถบความคืบหน้า เช่น 100% หรือสูตร SPARKLINE</p>
               </div>
+              <div className="p-2.5 rounded-lg bg-indigo-50 border border-indigo-200">
+                <span className="font-mono font-bold text-indigo-700">P: Check List</span>
+                <p className="text-slate-600 text-[11px] mt-0.5">☑️ รายการตรวจสอบย่อย ([x] หรือ [ ] บรรทัดต่อบรรทัด)</p>
+              </div>
             </div>
 
             {/* Preview table */}
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
-              <table className="w-full text-left text-xs text-slate-600">
+              <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
                 <thead className="bg-slate-100 font-mono font-semibold text-[11px] text-slate-800 border-b border-slate-200">
                   <tr>
                     <th className="p-2.5">Project ID</th>
                     <th className="p-2.5">Category</th>
                     <th className="p-2.5">Project Name</th>
-                    <th className="p-2.5">Tech Stack / Tools</th>
+                    <th className="p-2.5">Tech Stack</th>
+                    <th className="p-2.5">Start Date</th>
+                    <th className="p-2.5">Due Date</th>
                     <th className="p-2.5">Duration</th>
                     <th className="p-2.5">Owner</th>
                     <th className="p-2.5">Priority</th>
                     <th className="p-2.5">Status</th>
-                    <th className="p-2.5">Project Progress</th>
-                    <th className="p-2.5">Progress Bar</th>
+                    <th className="p-2.5">Check List</th>
+                    <th className="p-2.5">Progress</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -714,11 +783,17 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                       <td className="p-2.5">{t.category || t.project}</td>
                       <td className="p-2.5 text-slate-800 font-medium">{t.title}</td>
                       <td className="p-2.5 text-slate-500">{t.techStack || '-'}</td>
+                      <td className="p-2.5 text-slate-700">{t.startDate || '-'}</td>
+                      <td className="p-2.5 text-slate-700">{t.dueDate || '-'}</td>
                       <td className="p-2.5">{t.duration || '-'}</td>
                       <td className="p-2.5 text-slate-800">{t.owner}</td>
                       <td className="p-2.5">{t.priority}</td>
                       <td className="p-2.5">{t.status}</td>
-                      <td className="p-2.5">{t.progress}%</td>
+                      <td className="p-2.5 text-indigo-700 max-w-[200px] truncate">
+                        {t.subtasks && t.subtasks.length > 0
+                          ? t.subtasks.map((s) => (s.completed ? '✓ ' : '○ ') + s.title).join(' | ')
+                          : '-'}
+                      </td>
                       <td className="p-2.5 text-emerald-600 font-semibold">{t.progressBar || `${t.progress}%`}</td>
                     </tr>
                   ))}
@@ -873,14 +948,16 @@ export const GoogleSheetGuideView: React.FC<GoogleSheetGuideViewProps> = ({
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-white text-xs font-mono">
                     2
                   </span>
-                  <span>วางไฟล์ Code.gs</span>
+                  <span>วางไฟล์ Code.gs (หรือ รหัส.gs)</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  1. คลิกไฟล์ <strong>Code.gs</strong> ทางซ้ายมือ ลบโค้ดเดิมออกทั้งหมด
+                  1. คลิกไฟล์ <strong className="text-indigo-900 bg-indigo-50 px-1 py-0.5 rounded font-mono">รหัส.gs</strong> (หรือ <strong>Code.gs</strong>) ทางซ้ายมือ แล้วลบโค้ดเดิมออกทั้งหมด
                   <br />
-                  2. ไปที่แท็บที่ 1 ของหน้านี้ เลือกไฟล์ <strong className="text-indigo-600">Code.gs</strong> แล้วกดคัดลอกมาวาง
+                  2. ไปที่แท็บที่ 1 ของหน้านี้ เลือกไฟล์ <strong className="text-indigo-600 font-mono">Code.gs</strong> แล้วกดคัดลอกมาวาง
                   <br />
-                  3. ในนี้จะมีฟังก์ชัน <code className="bg-slate-200 px-1 rounded font-mono">include(filename)</code> ที่ช่วยรวมไฟล์ HTML ย่อยทั้งหมดเข้าด้วยกัน
+                  <span className="text-amber-800 bg-amber-50 p-1.5 rounded block mt-1 text-[11px] border border-amber-200 font-medium">
+                    ⚠️ <strong>ข้อควรระวัง:</strong> ในไฟล์ <em>รหัส.gs</em> ต้องวางเฉพาะโค้ดจาก <em>Code.gs</em> เท่านั้น <u>ห้ามนำโค้ด HTML มาวาง</u> หากนำโค้ด HTML มาวางจะเกิดข้อผิดพลาด <code>SyntaxError: Unexpected token '&lt;' บรรทัด: 2</code> ทันที
+                  </span>
                 </p>
               </div>
 
